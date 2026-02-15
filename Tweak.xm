@@ -21,6 +21,7 @@
 BOOL initialized = NO;
 id manager = nil;
 SEL show = nil;
+BOOL didAutoShowExplorer = NO;
 
 static NSHashTable *windowsWithGestures = nil;
 
@@ -49,6 +50,36 @@ inline bool isSnapchatApp() {
 
 inline BOOL flexAlreadyLoaded() {
     return NSClassFromString(@"FLEXExplorerToolbar") != nil;
+}
+
+inline BOOL isSpringBoardProcess() {
+    return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"];
+}
+
+inline void enableNetworkMonitoringIfPossible() {
+    if (!manager) {
+        return;
+    }
+
+    // FLEX exposes this as the setter for the `networkDebuggingEnabled` property
+    // (from FLEXManager+Networking), but keep a fallback for older/variant builds.
+    SEL selectors[] = {
+        @selector(setNetworkDebuggingEnabled:),
+        NSSelectorFromString(@"enableNetworkDebugging")
+    };
+
+    for (NSUInteger i = 0; i < sizeof(selectors) / sizeof(SEL); i++) {
+        SEL selector = selectors[i];
+        if ([manager respondsToSelector:selector]) {
+            if (selector == @selector(setNetworkDebuggingEnabled:)) {
+                ((void (*)(id, SEL, BOOL))[manager methodForSelector:selector])(manager, selector, YES);
+            } else {
+                ((void (*)(id, SEL))[manager methodForSelector:selector])(manager, selector);
+            }
+            HBLogInfo(@"FLEXing: Enabled network monitoring via %@", NSStringFromSelector(selector));
+            break;
+        }
+    }
 }
 
 %ctor {
@@ -111,6 +142,7 @@ inline BOOL flexAlreadyLoaded() {
         if (FLXGetManager && FLXRevealSEL) {
             manager = FLXGetManager();
             show = FLXRevealSEL();
+            enableNetworkMonitoringIfPossible();
 
             windowsWithGestures = [NSHashTable weakObjectsHashTable];
             initialized = YES;
@@ -133,6 +165,15 @@ inline BOOL flexAlreadyLoaded() {
     BOOL needsGesture = ![windowsWithGestures containsObject:self];
     BOOL isFLEXWindow = [self isKindOfClass:FLXWindowClass()];
     BOOL isStatusBar  = [self isKindOfClass:[UIStatusBarWindow class]];
+    BOOL shouldAutoShow = !didAutoShowExplorer && !isSpringBoardProcess();
+
+    if (shouldAutoShow && !isFLEXWindow && manager && show) {
+        didAutoShowExplorer = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [manager performSelector:show];
+        });
+    }
+
     if (needsGesture && !isFLEXWindow && !isStatusBar) {
         [windowsWithGestures addObject:self];
 
