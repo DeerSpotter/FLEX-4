@@ -393,12 +393,12 @@ static NSString *FLEXingDisplayNameForCurrentProcess(void) {
 %hook FLEXExplorerViewController
 - (void)viewDidLoad {
     %orig;
-    [self flexing_installInlineSettingsButton];
+    [(id)self flexing_installInlineSettingsButton];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig(animated);
-    [self flexing_installInlineSettingsButton];
+    [(id)self flexing_installInlineSettingsButton];
 }
 
 - (BOOL)_canShowWhileLocked {
@@ -417,7 +417,7 @@ static NSString *FLEXingDisplayNameForCurrentProcess(void) {
 %new(v@:)
 - (void)flexing_installInlineSettingsButton {
     UIBarButtonItem *item = [[UIBarButtonItem alloc] initWithTitle:@"FLEXing" style:UIBarButtonItemStylePlain target:self action:@selector(flexing_openInlineSettings:)];
-    self.navigationItem.leftBarButtonItem = item;
+    ((UIViewController *)self).navigationItem.leftBarButtonItem = item;
 }
 %end
 
