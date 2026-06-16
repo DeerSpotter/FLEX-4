@@ -13,6 +13,7 @@ NSString *FLEXingPreferencesPath(void);
 NSDictionary *FLEXingLoadPreferences(void);
 NSMutableDictionary *FLEXingLoadMutablePreferences(void);
 NSDictionary *FLEXingSettingsForBundle(NSString *bundleIdentifier);
+BOOL FLEXingHasSettingsForBundle(NSString *bundleIdentifier);
 BOOL FLEXingIsBundleEnabled(NSString *bundleIdentifier);
 BOOL FLEXingShouldAutoShowBundle(NSString *bundleIdentifier);
 BOOL FLEXingNetworkMonitoringEnabled(void);
