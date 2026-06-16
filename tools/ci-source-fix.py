@@ -16,8 +16,10 @@ text = text.replace(
     "Class cls = (Class)classLookup[className];",
 )
 
-# Keep the FLEXing row on the stable lightweight menu. The searchable browser is
-# too heavy to open directly from the FLEX row and can crash apps on tap.
+# Keep the FLEXing row on a stable lightweight menu. Do not open the searchable
+# browser immediately from the FLEX row, because building every class and method
+# on the first tap can crash heavier apps. Put that browser behind a separate
+# Search Classes / Methods action instead.
 # Use componentsJoinedByString instead of a large format string with embedded
 # newline escapes, so the generated Objective-C source cannot split a string
 # literal and fail to compile.
@@ -49,6 +51,16 @@ stable_open = r'''static void FLEXingOpenPanelMenu(__kindof UITableViewControlle
 
     [menu addAction:[UIAlertAction actionWithTitle:(autoShow ? @"Turn Auto Show Off" : @"Turn Auto Show On") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         FLEXingSaveCurrentAppSettings(enabled, !autoShow, adjustments);
+    }]];
+
+    [menu addAction:[UIAlertAction actionWithTitle:@"Search Classes / Methods" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        FLEXingBrowserViewController *browser = [[FLEXingBrowserViewController alloc] init];
+        if (host.navigationController) {
+            [host.navigationController pushViewController:browser animated:YES];
+        } else {
+            UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:browser];
+            [(UIViewController *)host presentViewController:navigationController animated:YES completion:nil];
+        }
     }]];
 
     [menu addAction:[UIAlertAction actionWithTitle:@"Saved Patches" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -89,7 +101,7 @@ text = re.sub(
 )
 
 # Retain the custom row block. If FLEX does not copy the block internally, a
-# temporary stack block can be invalid by the time the row is tapped.
+temporary stack block can be invalid by the time the row is tapped.
 if "static FLEXingGlobalsRowAction flexingPanelEntryAction = nil;" not in text:
     text = text.replace(
         "typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\n",
