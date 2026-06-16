@@ -29,7 +29,10 @@ jobs:
           altlist: true
           altlist-src: 'opa334/AltList'
           altlist-branch: 'main'
-      
+
+      - name: Patch FLEXing global search index
+        run: python3 tools/add-setter-value-search.py
+
       - name: Build rootless package
         run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
