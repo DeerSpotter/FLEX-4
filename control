@@ -1,9 +1,9 @@
 Package: com.github.devnoname120.flexing
 Name: FLEXing
-Pre-Depends: firmware (>= 8.0)
-Version: 1.5.2
+Pre-Depends: firmware (>= 15.0)
+Version: 1.6.0
 Architecture: iphoneos-arm
-Description: Open FLEX anywhere!
+Description: Open FLEX anywhere with a per-app manager GUI.
 Maintainer: Tanner Bennett <thepantsthief@me.com>
 Author: Tanner Bennett <thepantsthief@me.com>
 Section: Tweaks
