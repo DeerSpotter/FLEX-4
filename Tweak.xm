@@ -27,10 +27,13 @@ BOOL currentBundleAllowsFLEX = NO;
 BOOL currentBundleShouldAutoShow = NO;
 
 static NSHashTable *windowsWithGestures = nil;
+static BOOL flexOverlayHooksInitialized = NO;
 
 static id (*FLXGetManager)();
 static SEL (*FLXRevealSEL)();
 static Class (*FLXWindowClass)();
+
+static void FLEXingInitializeFLEXOverlayHooks(void);
 
 inline BOOL isFLEXingManagerProcess() {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.github.devnoname120.flexing.manager"];
@@ -57,7 +60,7 @@ inline bool isSnapchatApp() {
 }
 
 inline BOOL flexAlreadyLoaded() {
-    return NSClassFromString(@"FLEXExplorerToolbar") != nil;
+    return NSClassFromString(@"FLEXExplorerToolbar") != nil || NSClassFromString(@"FLEXExplorerViewController") != nil;
 }
 
 inline BOOL isSpringBoardProcess() {
@@ -132,6 +135,176 @@ static void FLEXingInstallInlineSettingsButton(UIViewController *controller) {
     controller.navigationItem.leftBarButtonItem = item;
 }
 
+%hook UIWindow
+- (BOOL)_shouldCreateContextAsSecure {
+    if (isFLEXingManagerProcess()) {
+        return %orig;
+    }
+    return (initialized && FLXWindowClass && [self isKindOfClass:FLXWindowClass()]) ? YES : %orig;
+}
+
+- (void)becomeKeyWindow {
+    %orig;
+
+    if (isFLEXingManagerProcess() || !initialized) {
+        return;
+    }
+
+    BOOL needsGesture = ![windowsWithGestures containsObject:self];
+    BOOL isFLEXWindow = FLXWindowClass && [self isKindOfClass:FLXWindowClass()];
+    BOOL isStatusBar  = [self isKindOfClass:[UIStatusBarWindow class]];
+    BOOL shouldAutoShow = !didAutoShowExplorer && !isSpringBoardProcess() && currentBundleAllowsFLEX && currentBundleShouldAutoShow;
+
+    if (shouldAutoShow && !isFLEXWindow && manager && show) {
+        didAutoShowExplorer = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [manager performSelector:show];
+        });
+    }
+
+    if (needsGesture && !isFLEXWindow && !isStatusBar && manager && show) {
+        [windowsWithGestures addObject:self];
+
+        // Add 3-finger long-press gesture for apps without a status bar
+        UILongPressGestureRecognizer *tap = [[UILongPressGestureRecognizer alloc] initWithTarget:manager action:show];
+        tap.minimumPressDuration = .5;
+        tap.numberOfTouchesRequired = 3;
+
+        [self addGestureRecognizer:tap];
+    }
+}
+%end
+
+%hook UIStatusBarWindow
+- (id)initWithFrame:(CGRect)frame {
+    self = %orig;
+    
+    if (!isFLEXingManagerProcess() && initialized && manager && show) {
+        // Add long-press gesture to status bar
+        [self addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:manager action:show]];
+    }
+    
+    return self;
+}
+%end
+
+%group FLEXOverlayHooks
+
+%hook FLEXExplorerViewController
+- (void)viewDidLoad {
+    %orig;
+    FLEXingInstallInlineSettingsButton((UIViewController *)self);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    %orig(animated);
+    FLEXingInstallInlineSettingsButton((UIViewController *)self);
+}
+
+- (BOOL)_canShowWhileLocked {
+    return YES;
+}
+
+%new(v@:@)
+- (void)flexing_openInlineSettings:(id)sender {
+    UIViewController *presenter = (UIViewController *)self;
+    NSString *bundleIdentifier = currentBundleIdentifier.length ? currentBundleIdentifier : (NSBundle.mainBundle.bundleIdentifier ?: @"");
+    BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
+    BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
+    NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
+
+    NSString *message = [NSString stringWithFormat:@"%@\n%@\n\nEnabled: %@\nAuto Show: %@\n\nSaved Adjustments:\n%@", FLEXingDisplayNameForCurrentProcess(), bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier", enabled ? @"On" : @"Off", autoShow ? @"On" : @"Off", adjustments.length ? adjustments : @"None"];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"FLEXing" message:message preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [alert addAction:[UIAlertAction actionWithTitle:(enabled ? @"Disable FLEX For This App" : @"Enable FLEX For This App") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        BOOL nextEnabled = !enabled;
+        FLEXingSaveCurrentAppSettings(nextEnabled, autoShow, adjustments);
+        FLEXingShowResult(presenter, @"Saved", nextEnabled ? @"FLEX will stay enabled for this app." : @"FLEX will be disabled for this app after restart.");
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:(autoShow ? @"Turn Auto Show Off" : @"Turn Auto Show On") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        BOOL nextAutoShow = !autoShow;
+        FLEXingSaveCurrentAppSettings(enabled, nextAutoShow, adjustments);
+        FLEXingShowResult(presenter, @"Saved", nextAutoShow ? @"FLEX will auto show next launch." : @"FLEX will not auto show next launch.");
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save Note / Adjustment Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UIAlertController *editor = [UIAlertController alertControllerWithTitle:@"Saved Adjustments" message:@"Stored for this app. Execution support can use this field later." preferredStyle:UIAlertControllerStyleAlert];
+        [editor addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+            textField.placeholder = @"Adjustment text";
+            textField.text = adjustments ?: @"";
+        }];
+        [editor addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [editor addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *saveAction) {
+            NSString *text = editor.textFields.firstObject.text ?: @"";
+            FLEXingSaveCurrentAppSettings(enabled, autoShow, text);
+            FLEXingShowResult(presenter, @"Saved", @"Adjustment text saved for this app.");
+        }]];
+        [presenter presentViewController:editor animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    UIPopoverPresentationController *popover = alert.popoverPresentationController;
+    if (popover) {
+        popover.barButtonItem = presenter.navigationItem.leftBarButtonItem;
+    }
+
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
+%end
+
+%hook FLEXManager
+%new(@@:@)
++ (NSString *)dlopen:(NSString *)path {
+    if (!dlopen(path.UTF8String, RTLD_NOW)) {
+        return @(dlerror());
+    }
+    
+    return @"OK";
+}
+%end
+
+%end
+
+static void FLEXingInitializeFLEXOverlayHooks(void) {
+    if (flexOverlayHooksInitialized) {
+        return;
+    }
+
+    if (!NSClassFromString(@"FLEXExplorerViewController")) {
+        HBLogInfo(@"FLEXing: FLEXExplorerViewController not available yet; overlay menu hook not installed.");
+        return;
+    }
+
+    %init(FLEXOverlayHooks);
+    flexOverlayHooksInitialized = YES;
+    HBLogInfo(@"FLEXing: Installed FLEX overlay menu hooks.");
+}
+
+%hook _UISheetPresentationController
+- (id)initWithPresentedViewController:(id)present presentingViewController:(id)presenter {
+    self = %orig;
+    if (!isFLEXingManagerProcess() && [present isKindOfClass:%c(FLEXNavigationController)]) {
+        // Enable half height sheet
+        if ([self respondsToSelector:@selector(_presentsAtStandardHalfHeight)]) {
+            self._presentsAtStandardHalfHeight = YES;
+        } else {
+            self._detents = @[[%c(_UISheetDetent) _mediumDetent], [%c(_UISheetDetent) _largeDetent]];
+        }
+        // Start fullscreen, 0 for half height
+        self._indexOfCurrentDetent = 1;
+        // Don't expand unless dragged up
+        self._prefersScrollingExpandsToLargerDetentWhenScrolledToEdge = NO;
+        // Don't dim first detent
+        self._indexOfLastUndimmedDetent = 1;
+    }
+    
+    return self;
+}
+%end
+
 %ctor {
     currentBundleIdentifier = NSBundle.mainBundle.bundleIdentifier ?: @"";
 
@@ -203,6 +376,8 @@ static void FLEXingInstallInlineSettingsButton(UIViewController *controller) {
     }
 
     if (handle || flexAlreadyLoaded()) {
+        FLEXingInitializeFLEXOverlayHooks();
+
         // FLEXing.dylib itself does not hard-link against libFLEX.dylib,
         // instead libFLEX.dylib provides getters for the relevant class
         // objects so that it can be updated independently of THIS tweak.
@@ -220,157 +395,6 @@ static void FLEXingInstallInlineSettingsButton(UIViewController *controller) {
         }
     }
 }
-
-%hook UIWindow
-- (BOOL)_shouldCreateContextAsSecure {
-    if (isFLEXingManagerProcess()) {
-        return %orig;
-    }
-    return (initialized && FLXWindowClass && [self isKindOfClass:FLXWindowClass()]) ? YES : %orig;
-}
-
-- (void)becomeKeyWindow {
-    %orig;
-
-    if (isFLEXingManagerProcess() || !initialized) {
-        return;
-    }
-
-    BOOL needsGesture = ![windowsWithGestures containsObject:self];
-    BOOL isFLEXWindow = FLXWindowClass && [self isKindOfClass:FLXWindowClass()];
-    BOOL isStatusBar  = [self isKindOfClass:[UIStatusBarWindow class]];
-    BOOL shouldAutoShow = !didAutoShowExplorer && !isSpringBoardProcess() && currentBundleAllowsFLEX && currentBundleShouldAutoShow;
-
-    if (shouldAutoShow && !isFLEXWindow && manager && show) {
-        didAutoShowExplorer = YES;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [manager performSelector:show];
-        });
-    }
-
-    if (needsGesture && !isFLEXWindow && !isStatusBar && manager && show) {
-        [windowsWithGestures addObject:self];
-
-        // Add 3-finger long-press gesture for apps without a status bar
-        UILongPressGestureRecognizer *tap = [[UILongPressGestureRecognizer alloc] initWithTarget:manager action:show];
-        tap.minimumPressDuration = .5;
-        tap.numberOfTouchesRequired = 3;
-
-        [self addGestureRecognizer:tap];
-    }
-}
-%end
-
-%hook UIStatusBarWindow
-- (id)initWithFrame:(CGRect)frame {
-    self = %orig;
-    
-    if (!isFLEXingManagerProcess() && initialized && manager && show) {
-        // Add long-press gesture to status bar
-        [self addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:manager action:show]];
-    }
-    
-    return self;
-}
-%end
-
-%hook FLEXExplorerViewController
-- (void)viewDidLoad {
-    %orig;
-    FLEXingInstallInlineSettingsButton((UIViewController *)self);
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    %orig(animated);
-    FLEXingInstallInlineSettingsButton((UIViewController *)self);
-}
-
-- (BOOL)_canShowWhileLocked {
-    return YES;
-}
-
-%new(v@:@)
-- (void)flexing_openInlineSettings:(id)sender {
-    UIViewController *presenter = (UIViewController *)self;
-    NSString *bundleIdentifier = currentBundleIdentifier.length ? currentBundleIdentifier : (NSBundle.mainBundle.bundleIdentifier ?: @"");
-    BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
-    BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
-    NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
-
-    NSString *message = [NSString stringWithFormat:@"%@\n%@\n\nEnabled: %@\nAuto Show: %@\n\nSaved Adjustments:\n%@", FLEXingDisplayNameForCurrentProcess(), bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier", enabled ? @"On" : @"Off", autoShow ? @"On" : @"Off", adjustments.length ? adjustments : @"None"];
-
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"FLEXing" message:message preferredStyle:UIAlertControllerStyleActionSheet];
-
-    [alert addAction:[UIAlertAction actionWithTitle:(enabled ? @"Disable FLEX For This App" : @"Enable FLEX For This App") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        BOOL nextEnabled = !enabled;
-        FLEXingSaveCurrentAppSettings(nextEnabled, autoShow, adjustments);
-        FLEXingShowResult(presenter, @"Saved", nextEnabled ? @"FLEX will stay enabled for this app." : @"FLEX will be disabled for this app after restart.");
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:(autoShow ? @"Turn Auto Show Off" : @"Turn Auto Show On") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        BOOL nextAutoShow = !autoShow;
-        FLEXingSaveCurrentAppSettings(enabled, nextAutoShow, adjustments);
-        FLEXingShowResult(presenter, @"Saved", nextAutoShow ? @"FLEX will auto show next launch." : @"FLEX will not auto show next launch.");
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"Save Note / Adjustment Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        UIAlertController *editor = [UIAlertController alertControllerWithTitle:@"Saved Adjustments" message:@"Stored for this app. Execution support can use this field later." preferredStyle:UIAlertControllerStyleAlert];
-        [editor addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-            textField.placeholder = @"Adjustment text";
-            textField.text = adjustments ?: @"";
-        }];
-        [editor addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-        [editor addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *saveAction) {
-            NSString *text = editor.textFields.firstObject.text ?: @"";
-            FLEXingSaveCurrentAppSettings(enabled, autoShow, text);
-            FLEXingShowResult(presenter, @"Saved", @"Adjustment text saved for this app.");
-        }]];
-        [presenter presentViewController:editor animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-
-    UIPopoverPresentationController *popover = alert.popoverPresentationController;
-    if (popover) {
-        popover.barButtonItem = presenter.navigationItem.leftBarButtonItem;
-    }
-
-    [presenter presentViewController:alert animated:YES completion:nil];
-}
-%end
-
-%hook _UISheetPresentationController
-- (id)initWithPresentedViewController:(id)present presentingViewController:(id)presenter {
-    self = %orig;
-    if (!isFLEXingManagerProcess() && [present isKindOfClass:%c(FLEXNavigationController)]) {
-        // Enable half height sheet
-        if ([self respondsToSelector:@selector(_presentsAtStandardHalfHeight)]) {
-            self._presentsAtStandardHalfHeight = YES;
-        } else {
-            self._detents = @[[%c(_UISheetDetent) _mediumDetent], [%c(_UISheetDetent) _largeDetent]];
-        }
-        // Start fullscreen, 0 for half height
-        self._indexOfCurrentDetent = 1;
-        // Don't expand unless dragged up
-        self._prefersScrollingExpandsToLargerDetentWhenScrolledToEdge = NO;
-        // Don't dim first detent
-        self._indexOfLastUndimmedDetent = 1;
-    }
-    
-    return self;
-}
-%end
-
-%hook FLEXManager
-%new(@@:@)
-+ (NSString *)dlopen:(NSString *)path {
-    if (!dlopen(path.UTF8String, RTLD_NOW)) {
-        return @(dlerror());
-    }
-    
-    return @"OK";
-}
-%end
 
 %ctor {
 #if TARGET_OS_SIMULATOR
