@@ -51,6 +51,14 @@ jobs:
           path = Path('Tweak.xm')
           text = path.read_text()
           text = text.replace('Class cls = (__bridge Class)classLookup[className];', 'Class cls = (Class)classLookup[className];')
+          text = text.replace(
+              'typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\n',
+              'typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\nstatic FLEXingGlobalsRowAction flexingPanelEntryAction = nil;\n'
+          )
+          text = text.replace(
+              '    FLEXingGlobalsRowAction action = ^(__kindof UITableViewController *host) {\n        FLEXingOpenPanelMenu(host);\n    };\n\n    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"FLEXing", action);',
+              '    if (!flexingPanelEntryAction) {\n        flexingPanelEntryAction = [^(__kindof UITableViewController *host) {\n            FLEXingOpenPanelMenu(host);\n        } copy];\n    }\n\n    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"FLEXing", flexingPanelEntryAction);'
+          )
           path.write_text(text)
           PY
 
