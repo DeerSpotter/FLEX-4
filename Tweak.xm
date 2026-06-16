@@ -118,23 +118,344 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
     return saved;
 }
 
+static NSString *FLEXingSafeString(id value) {
+    return [value isKindOfClass:NSString.class] ? value : @"";
+}
+
+static NSSet<NSString *> *FLEXingSelectedPatchIdentifiers(void) {
+    NSMutableSet<NSString *> *identifiers = [NSMutableSet set];
+    for (NSDictionary *patch in FLEXingPatchesForBundle(FLEXingCurrentBundleIdentifier())) {
+        NSString *identifier = FLEXingSafeString(patch[@"Identifier"]);
+        if (identifier.length > 0) {
+            [identifiers addObject:identifier];
+        }
+    }
+    return identifiers;
+}
+
 @interface FLEXingBrowserItem : NSObject
 @property (nonatomic, copy) NSString *title;
 @property (nonatomic, copy) NSString *subtitle;
 @property (nonatomic, copy) NSString *section;
 @property (nonatomic, copy) NSString *kind;
-+ (instancetype)itemWithTitle:(NSString *)title subtitle:(NSString *)subtitle section:(NSString *)section kind:(NSString *)kind;
+@property (nonatomic, copy) NSString *identifier;
+@property (nonatomic, strong) NSDictionary *metadata;
++ (instancetype)itemWithTitle:(NSString *)title subtitle:(NSString *)subtitle section:(NSString *)section kind:(NSString *)kind identifier:(NSString *)identifier metadata:(NSDictionary *)metadata;
 @end
 
 @implementation FLEXingBrowserItem
-+ (instancetype)itemWithTitle:(NSString *)title subtitle:(NSString *)subtitle section:(NSString *)section kind:(NSString *)kind {
++ (instancetype)itemWithTitle:(NSString *)title subtitle:(NSString *)subtitle section:(NSString *)section kind:(NSString *)kind identifier:(NSString *)identifier metadata:(NSDictionary *)metadata {
     FLEXingBrowserItem *item = [FLEXingBrowserItem new];
     item.title = title ?: @"";
     item.subtitle = subtitle ?: @"";
     item.section = section ?: @"";
     item.kind = kind ?: @"";
+    item.identifier = identifier ?: @"";
+    item.metadata = [metadata isKindOfClass:NSDictionary.class] ? metadata : @{};
     return item;
 }
+@end
+
+static NSDictionary *FLEXingPatchFromBrowserItem(FLEXingBrowserItem *item) {
+    NSMutableDictionary *patch = [NSMutableDictionary dictionary];
+    NSString *now = [NSString stringWithFormat:@"%f", [[NSDate date] timeIntervalSince1970]];
+    NSString *kind = item.kind ?: @"";
+    NSDictionary *metadata = item.metadata ?: @{};
+
+    patch[@"Identifier"] = item.identifier ?: @"";
+    patch[@"Kind"] = kind;
+    patch[@"UnitName"] = item.title ?: @"";
+    patch[@"Title"] = item.title ?: @"";
+    patch[@"Subtitle"] = item.subtitle ?: @"";
+    patch[@"Enabled"] = @YES;
+    patch[@"ReturnMode"] = @"pass-through";
+    patch[@"ReturnType"] = FLEXingSafeString(metadata[@"ReturnType"]).length ? FLEXingSafeString(metadata[@"ReturnType"]) : @"id";
+    patch[@"Created"] = now;
+    patch[@"Updated"] = now;
+
+    if ([kind isEqualToString:@"method"] || [kind isEqualToString:@"classMethod"]) {
+        patch[@"TargetClass"] = FLEXingSafeString(metadata[@"Class"]);
+        patch[@"TargetMethod"] = FLEXingSafeString(metadata[@"Selector"]);
+        patch[@"MethodScope"] = [kind isEqualToString:@"classMethod"] ? @"class" : @"instance";
+        patch[@"TypeEncoding"] = FLEXingSafeString(metadata[@"TypeEncoding"]);
+    } else if ([kind isEqualToString:@"class"]) {
+        patch[@"TargetClass"] = item.title ?: @"";
+        patch[@"TargetMethod"] = @"";
+        patch[@"MethodScope"] = @"class";
+    } else if ([kind isEqualToString:@"library"]) {
+        patch[@"Library"] = item.title ?: @"";
+        patch[@"Path"] = FLEXingSafeString(metadata[@"Path"]);
+    }
+
+    return patch;
+}
+
+static NSString *FLEXingPatchDisplayTitle(NSDictionary *patch) {
+    NSString *name = FLEXingSafeString(patch[@"UnitName"]);
+    if (name.length > 0) {
+        return name;
+    }
+    name = FLEXingSafeString(patch[@"TargetMethod"]);
+    if (name.length > 0) {
+        return name;
+    }
+    name = FLEXingSafeString(patch[@"TargetClass"]);
+    if (name.length > 0) {
+        return name;
+    }
+    name = FLEXingSafeString(patch[@"Library"]);
+    return name.length ? name : @"Patch Unit";
+}
+
+static NSString *FLEXingPatchDisplaySubtitle(NSDictionary *patch) {
+    NSString *kind = FLEXingSafeString(patch[@"Kind"]);
+    if ([kind isEqualToString:@"method"] || [kind isEqualToString:@"classMethod"]) {
+        NSString *scope = [kind isEqualToString:@"classMethod"] ? @"+" : @"-";
+        return [NSString stringWithFormat:@"%@ %@\n%@ %@", FLEXingSafeString(patch[@"TargetClass"]), FLEXingSafeString(patch[@"TargetMethod"]), scope, FLEXingSafeString(patch[@"TypeEncoding"] )];
+    }
+    if ([kind isEqualToString:@"class"]) {
+        return @"Obj-C class selection";
+    }
+    if ([kind isEqualToString:@"library"]) {
+        return FLEXingSafeString(patch[@"Path"]);
+    }
+    return FLEXingSafeString(patch[@"Subtitle"]);
+}
+
+@interface FLEXingPatchEditorViewController : UITableViewController
+@property (nonatomic, strong) NSMutableDictionary *patch;
+@end
+
+@implementation FLEXingPatchEditorViewController
+
+- (instancetype)initWithPatch:(NSDictionary *)patch {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) {
+        _patch = [patch mutableCopy] ?: [NSMutableDictionary dictionary];
+        self.title = @"Edit Unit";
+    }
+    return self;
+}
+
+- (void)savePatch {
+    self.patch[@"Updated"] = [NSString stringWithFormat:@"%f", [[NSDate date] timeIntervalSince1970]];
+    FLEXingUpsertPatchForBundle(FLEXingCurrentBundleIdentifier(), self.patch);
+}
+
+- (NSString *)titleForRow:(NSIndexPath *)indexPath {
+    if (indexPath.section == 0) {
+        return @"Unit Name";
+    }
+    if (indexPath.section == 1) {
+        return indexPath.row == 0 ? @"Target Class" : @"Target Method";
+    }
+    if (indexPath.section == 2) {
+        if (indexPath.row == 0) return @"Enabled";
+        if (indexPath.row == 1) return @"Return Mode";
+        return @"Return Type";
+    }
+    return indexPath.row == 0 ? @"Remove From Saved Patches" : @"";
+}
+
+- (NSString *)valueForRow:(NSIndexPath *)indexPath {
+    if (indexPath.section == 0) {
+        return FLEXingPatchDisplayTitle(self.patch);
+    }
+    if (indexPath.section == 1) {
+        return indexPath.row == 0 ? FLEXingSafeString(self.patch[@"TargetClass"]) : FLEXingSafeString(self.patch[@"TargetMethod"]);
+    }
+    if (indexPath.section == 2) {
+        if (indexPath.row == 0) return [self.patch[@"Enabled"] boolValue] ? @"On" : @"Off";
+        if (indexPath.row == 1) return FLEXingSafeString(self.patch[@"ReturnMode"]).length ? FLEXingSafeString(self.patch[@"ReturnMode"]) : @"pass-through";
+        return FLEXingSafeString(self.patch[@"ReturnType"]).length ? FLEXingSafeString(self.patch[@"ReturnType"]) : @"id";
+    }
+    return @"";
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 4;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == 0) return 1;
+    if (section == 1) return 2;
+    if (section == 2) return 3;
+    return 1;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == 0) return @"Unit Name";
+    if (section == 1) return @"Target";
+    if (section == 2) return @"Patch Settings";
+    return @"Actions";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *cellIdentifier = @"FLEXingPatchEditorCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:cellIdentifier];
+    }
+
+    cell.textLabel.text = [self titleForRow:indexPath];
+    cell.detailTextLabel.text = [self valueForRow:indexPath];
+    cell.textLabel.textColor = UIColor.labelColor;
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+    if (indexPath.section == 3) {
+        cell.textLabel.textColor = UIColor.systemRedColor;
+        cell.detailTextLabel.text = nil;
+        cell.accessoryType = UITableViewCellAccessoryNone;
+    }
+
+    return cell;
+}
+
+- (void)presentTextEditorWithTitle:(NSString *)title key:(NSString *)key placeholder:(NSString *)placeholder {
+    UIAlertController *editor = [UIAlertController alertControllerWithTitle:title message:nil preferredStyle:UIAlertControllerStyleAlert];
+    [editor addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = placeholder;
+        textField.text = FLEXingSafeString(self.patch[key]);
+    }];
+    [editor addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [editor addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        self.patch[key] = editor.textFields.firstObject.text ?: @"";
+        [self savePatch];
+        [self.tableView reloadData];
+    }]];
+    [self presentViewController:editor animated:YES completion:nil];
+}
+
+- (void)presentReturnModePicker {
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"Return Mode" message:@"Saved only. Automatic execution will be wired separately." preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray<NSString *> *modes = @[@"pass-through", @"true", @"false", @"nil", @"custom"];
+    for (NSString *mode in modes) {
+        [picker addAction:[UIAlertAction actionWithTitle:mode style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            self.patch[@"ReturnMode"] = mode;
+            [self savePatch];
+            [self.tableView reloadData];
+        }]];
+    }
+    [picker addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+
+    if (indexPath.section == 0) {
+        [self presentTextEditorWithTitle:@"Unit Name" key:@"UnitName" placeholder:@"Patch name"];
+        return;
+    }
+
+    if (indexPath.section == 1) {
+        [self presentTextEditorWithTitle:(indexPath.row == 0 ? @"Target Class" : @"Target Method") key:(indexPath.row == 0 ? @"TargetClass" : @"TargetMethod") placeholder:@"Value"];
+        return;
+    }
+
+    if (indexPath.section == 2) {
+        if (indexPath.row == 0) {
+            self.patch[@"Enabled"] = @(![self.patch[@"Enabled"] boolValue]);
+            [self savePatch];
+            [self.tableView reloadData];
+        } else if (indexPath.row == 1) {
+            [self presentReturnModePicker];
+        } else {
+            [self presentTextEditorWithTitle:@"Return Type" key:@"ReturnType" placeholder:@"id / BOOL / void"];
+        }
+        return;
+    }
+
+    if (indexPath.section == 3) {
+        NSString *identifier = FLEXingSafeString(self.patch[@"Identifier"]);
+        FLEXingRemovePatchForBundle(FLEXingCurrentBundleIdentifier(), identifier);
+        [self.navigationController popViewControllerAnimated:YES];
+    }
+}
+
+@end
+
+@interface FLEXingPatchListViewController : UITableViewController
+@property (nonatomic, strong) NSArray<NSDictionary *> *patches;
+@end
+
+@implementation FLEXingPatchListViewController
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) {
+        self.title = @"Saved Patches";
+    }
+    return self;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.patches = FLEXingPatchesForBundle(FLEXingCurrentBundleIdentifier());
+    [self.tableView reloadData];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 1;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return self.patches.count == 0 ? 1 : self.patches.count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return [NSString stringWithFormat:@"%@ Patches", FLEXingDisplayNameForCurrentProcess()];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *cellIdentifier = @"FLEXingPatchListCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellIdentifier];
+    }
+
+    cell.textLabel.numberOfLines = 2;
+    cell.detailTextLabel.numberOfLines = 2;
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+    if (self.patches.count == 0) {
+        cell.textLabel.text = @"No Saved Patches";
+        cell.detailTextLabel.text = @"Search classes or methods, then tap a result to add it here.";
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        return cell;
+    }
+
+    NSDictionary *patch = self.patches[(NSUInteger)indexPath.row];
+    cell.textLabel.text = FLEXingPatchDisplayTitle(patch);
+    cell.detailTextLabel.text = FLEXingPatchDisplaySubtitle(patch);
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (self.patches.count == 0) {
+        return;
+    }
+
+    NSDictionary *patch = self.patches[(NSUInteger)indexPath.row];
+    FLEXingPatchEditorViewController *editor = [[FLEXingPatchEditorViewController alloc] initWithPatch:patch];
+    [self.navigationController pushViewController:editor animated:YES];
+}
+
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
+    return self.patches.count > 0;
+}
+
+- (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (editingStyle == UITableViewCellEditingStyleDelete && indexPath.row < (NSInteger)self.patches.count) {
+        NSDictionary *patch = self.patches[(NSUInteger)indexPath.row];
+        FLEXingRemovePatchForBundle(FLEXingCurrentBundleIdentifier(), FLEXingSafeString(patch[@"Identifier"]));
+        self.patches = FLEXingPatchesForBundle(FLEXingCurrentBundleIdentifier());
+        [self.tableView reloadData];
+    }
+}
+
 @end
 
 @interface FLEXingBrowserViewController : UITableViewController <UISearchBarDelegate>
@@ -164,11 +485,47 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
     self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 56.0)];
     self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     self.searchBar.delegate = self;
-    self.searchBar.placeholder = @"Search class, library, setting...";
+    self.searchBar.placeholder = @"Search class or method...";
     self.tableView.tableHeaderView = self.searchBar;
 
-    [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"FLEXingCell"];
     [self reloadItems];
+}
+
+- (NSString *)identifierForKind:(NSString *)kind parts:(NSArray<NSString *> *)parts {
+    NSMutableArray<NSString *> *clean = [NSMutableArray arrayWithObject:kind ?: @""];
+    for (NSString *part in parts) {
+        [clean addObject:part ?: @""];
+    }
+    return [clean componentsJoinedByString:@"|"];
+}
+
+- (void)addMethodItemsForClass:(Class)classObject className:(NSString *)className toArray:(NSMutableArray<FLEXingBrowserItem *> *)items {
+    unsigned int methodCount = 0;
+    Method *methods = class_copyMethodList(classObject, &methodCount);
+    for (unsigned int index = 0; index < methodCount; index++) {
+        SEL selector = method_getName(methods[index]);
+        const char *typeEncoding = method_getTypeEncoding(methods[index]);
+        NSString *selectorName = selector ? NSStringFromSelector(selector) : @"";
+        NSString *encoding = typeEncoding ? [NSString stringWithUTF8String:typeEncoding] : @"";
+        if (selectorName.length == 0) {
+            continue;
+        }
+
+        NSString *kind = class_isMetaClass(classObject) ? @"classMethod" : @"method";
+        NSString *scope = class_isMetaClass(classObject) ? @"+" : @"-";
+        NSString *identifier = [self identifierForKind:kind parts:@[className ?: @"", selectorName]];
+        NSDictionary *metadata = @{
+            @"Class": className ?: @"",
+            @"Selector": selectorName,
+            @"TypeEncoding": encoding,
+            @"ReturnType": @"id"
+        };
+        NSString *subtitle = [NSString stringWithFormat:@"%@ %@\n%@", scope, className ?: @"", encoding];
+        [items addObject:[FLEXingBrowserItem itemWithTitle:selectorName subtitle:subtitle section:@"Obj-C Methods" kind:kind identifier:identifier metadata:metadata]];
+    }
+    if (methods) {
+        free(methods);
+    }
 }
 
 - (void)reloadItems {
@@ -177,11 +534,13 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
     BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
     BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
     NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
+    NSUInteger patchCount = FLEXingPatchesForBundle(bundleIdentifier).count;
 
-    [items addObject:[FLEXingBrowserItem itemWithTitle:FLEXingDisplayNameForCurrentProcess() subtitle:bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier" section:@"Current App" kind:@"info"]];
-    [items addObject:[FLEXingBrowserItem itemWithTitle:(enabled ? @"Enabled: On" : @"Enabled: Off") subtitle:@"Tap to toggle FLEX for this app on next launch" section:@"Settings" kind:@"toggleEnabled"]];
-    [items addObject:[FLEXingBrowserItem itemWithTitle:(autoShow ? @"Auto Show: On" : @"Auto Show: Off") subtitle:@"Tap to toggle automatic opening on next launch" section:@"Settings" kind:@"toggleAutoShow"]];
-    [items addObject:[FLEXingBrowserItem itemWithTitle:@"Saved Adjustments" subtitle:(adjustments.length ? adjustments : @"None. Tap to edit saved text for this app.") section:@"Settings" kind:@"editAdjustments"]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:FLEXingDisplayNameForCurrentProcess() subtitle:bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier" section:@"Current App" kind:@"info" identifier:@"currentApp" metadata:@{}]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:[NSString stringWithFormat:@"Saved Patches (%lu)", (unsigned long)patchCount] subtitle:@"Selected classes and methods appear here for this app" section:@"Patches" kind:@"savedPatches" identifier:@"savedPatches" metadata:@{}]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:(enabled ? @"Enabled: On" : @"Enabled: Off") subtitle:@"Tap to toggle FLEX for this app on next launch" section:@"Settings" kind:@"toggleEnabled" identifier:@"toggleEnabled" metadata:@{}]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:(autoShow ? @"Auto Show: On" : @"Auto Show: Off") subtitle:@"Tap to toggle automatic opening on next launch" section:@"Settings" kind:@"toggleAutoShow" identifier:@"toggleAutoShow" metadata:@{}]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:@"Saved Adjustments" subtitle:(adjustments.length ? adjustments : @"None. Tap to edit saved text for this app.") section:@"Settings" kind:@"editAdjustments" identifier:@"editAdjustments" metadata:@{}]];
 
     uint32_t imageCount = _dyld_image_count();
     for (uint32_t index = 0; index < imageCount; index++) {
@@ -194,7 +553,8 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
         if (name.length == 0) {
             name = path.lastPathComponent;
         }
-        [items addObject:[FLEXingBrowserItem itemWithTitle:name subtitle:path section:@"Libraries" kind:@"library"]];
+        NSString *identifier = [self identifierForKind:@"library" parts:@[name ?: @"", path ?: @""]];
+        [items addObject:[FLEXingBrowserItem itemWithTitle:name subtitle:path section:@"Libraries" kind:@"library" identifier:identifier metadata:@{@"Path": path ?: @""}]];
     }
 
     int classCount = objc_getClassList(NULL, 0);
@@ -202,55 +562,79 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
         Class *classes = (Class *)calloc((NSUInteger)classCount, sizeof(Class));
         int actualCount = objc_getClassList(classes, classCount);
         NSMutableArray<NSString *> *classNames = [NSMutableArray arrayWithCapacity:(NSUInteger)actualCount];
+        NSMutableDictionary<NSString *, id> *classLookup = [NSMutableDictionary dictionary];
+
         for (int index = 0; index < actualCount; index++) {
             const char *name = class_getName(classes[index]);
             if (name) {
-                [classNames addObject:[NSString stringWithUTF8String:name]];
+                NSString *className = [NSString stringWithUTF8String:name];
+                [classNames addObject:className];
+                classLookup[className] = classes[index];
             }
         }
-        free(classes);
 
         [classNames sortUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
         for (NSString *className in classNames) {
-            [items addObject:[FLEXingBrowserItem itemWithTitle:className subtitle:@"Obj-C Class" section:@"Obj-C Classes" kind:@"class"]];
+            NSString *identifier = [self identifierForKind:@"class" parts:@[className]];
+            [items addObject:[FLEXingBrowserItem itemWithTitle:className subtitle:@"Obj-C Class" section:@"Obj-C Classes" kind:@"class" identifier:identifier metadata:@{@"Class": className}]];
+
+            Class cls = (__bridge Class)classLookup[className];
+            [self addMethodItemsForClass:cls className:className toArray:items];
+            [self addMethodItemsForClass:object_getClass(cls) className:className toArray:items];
         }
+
+        free(classes);
     }
 
     self.allItems = items;
     [self applyFilter];
 }
 
+- (NSArray<FLEXingBrowserItem *> *)visibleItemsForQuery:(NSString *)trimmed {
+    NSSet<NSString *> *selectedIdentifiers = FLEXingSelectedPatchIdentifiers();
+
+    if (trimmed.length == 0) {
+        NSMutableArray<FLEXingBrowserItem *> *defaultItems = [NSMutableArray array];
+        for (FLEXingBrowserItem *item in self.allItems) {
+            if ([item.kind isEqualToString:@"method"] || [item.kind isEqualToString:@"classMethod"]) {
+                continue;
+            }
+            [defaultItems addObject:item];
+        }
+        return defaultItems;
+    }
+
+    NSString *lower = trimmed.lowercaseString;
+    NSMutableArray<FLEXingBrowserItem *> *matches = [NSMutableArray array];
+    for (FLEXingBrowserItem *item in self.allItems) {
+        NSString *haystack = [NSString stringWithFormat:@"%@ %@ %@ %@ %@", item.title ?: @"", item.subtitle ?: @"", item.section ?: @"", item.kind ?: @"", item.identifier ?: @""];
+        if ([haystack.lowercaseString containsString:lower] || [selectedIdentifiers containsObject:item.identifier]) {
+            [matches addObject:item];
+        }
+    }
+    return matches;
+}
+
 - (void)applyFilter {
     NSString *trimmed = [self.query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (trimmed.length == 0) {
-        self.filteredItems = self.allItems;
-    } else {
-        NSString *lower = trimmed.lowercaseString;
-        NSMutableArray<FLEXingBrowserItem *> *matches = [NSMutableArray array];
-        for (FLEXingBrowserItem *item in self.allItems) {
-            NSString *haystack = [NSString stringWithFormat:@"%@ %@ %@ %@", item.title ?: @"", item.subtitle ?: @"", item.section ?: @"", item.kind ?: @""];
-            if ([haystack.lowercaseString containsString:lower]) {
-                [matches addObject:item];
-            }
-        }
-        self.filteredItems = matches;
-    }
+    self.filteredItems = [self visibleItemsForQuery:trimmed];
     [self.tableView reloadData];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+- (NSMutableOrderedSet<NSString *> *)visibleSections {
     NSMutableOrderedSet<NSString *> *sections = [NSMutableOrderedSet orderedSet];
     for (FLEXingBrowserItem *item in self.filteredItems) {
         [sections addObject:item.section ?: @""];
     }
-    return sections.count;
+    return sections;
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return [self visibleSections].count;
 }
 
 - (NSString *)sectionTitleAtIndex:(NSInteger)sectionIndex {
-    NSMutableOrderedSet<NSString *> *sections = [NSMutableOrderedSet orderedSet];
-    for (FLEXingBrowserItem *item in self.filteredItems) {
-        [sections addObject:item.section ?: @""];
-    }
+    NSMutableOrderedSet<NSString *> *sections = [self visibleSections];
     if (sectionIndex < 0 || sectionIndex >= (NSInteger)sections.count) {
         return @"";
     }
@@ -277,19 +661,42 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"FLEXingCell" forIndexPath:indexPath];
+    static NSString *cellIdentifier = @"FLEXingCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellIdentifier];
+    }
+
     FLEXingBrowserItem *item = [self itemsForSection:indexPath.section][(NSUInteger)indexPath.row];
+    NSSet<NSString *> *selectedIdentifiers = FLEXingSelectedPatchIdentifiers();
+    BOOL selectablePatchItem = [@[@"class", @"method", @"classMethod", @"library"] containsObject:item.kind];
 
     cell.textLabel.text = item.title;
     cell.textLabel.numberOfLines = 2;
-    cell.detailTextLabel.text = nil;
-    cell.accessoryType = ([item.kind isEqualToString:@"toggleEnabled"] || [item.kind isEqualToString:@"toggleAutoShow"] || [item.kind isEqualToString:@"editAdjustments"]) ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
+    cell.detailTextLabel.text = item.subtitle;
+    cell.detailTextLabel.numberOfLines = 2;
+    cell.textLabel.textColor = UIColor.labelColor;
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
 
-    if (item.subtitle.length > 0) {
-        cell.textLabel.text = [NSString stringWithFormat:@"%@\n%@", item.title, item.subtitle];
+    if (selectablePatchItem) {
+        cell.accessoryType = [selectedIdentifiers containsObject:item.identifier] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    } else if ([item.kind isEqualToString:@"savedPatches"] || [item.kind isEqualToString:@"toggleEnabled"] || [item.kind isEqualToString:@"toggleAutoShow"] || [item.kind isEqualToString:@"editAdjustments"]) {
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else {
+        cell.accessoryType = UITableViewCellAccessoryNone;
     }
 
     return cell;
+}
+
+- (void)showPatchSavedToastForItem:(FLEXingBrowserItem *)item added:(BOOL)added {
+    NSString *message = added ? @"Added to Saved Patches" : @"Removed from Saved Patches";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:item.title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:alert animated:YES completion:^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [alert dismissViewControllerAnimated:YES completion:nil];
+        });
+    }];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -299,6 +706,12 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
     BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
     BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
     NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
+
+    if ([item.kind isEqualToString:@"savedPatches"]) {
+        FLEXingPatchListViewController *patches = [[FLEXingPatchListViewController alloc] init];
+        [self.navigationController pushViewController:patches animated:YES];
+        return;
+    }
 
     if ([item.kind isEqualToString:@"toggleEnabled"]) {
         BOOL nextEnabled = !enabled;
@@ -327,6 +740,19 @@ static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString 
             [self reloadItems];
         }]];
         [self presentViewController:editor animated:YES completion:nil];
+        return;
+    }
+
+    if ([@[@"class", @"method", @"classMethod", @"library"] containsObject:item.kind]) {
+        NSSet<NSString *> *selectedIdentifiers = FLEXingSelectedPatchIdentifiers();
+        BOOL wasSelected = [selectedIdentifiers containsObject:item.identifier];
+        if (wasSelected) {
+            FLEXingRemovePatchForBundle(bundleIdentifier, item.identifier);
+        } else {
+            FLEXingUpsertPatchForBundle(bundleIdentifier, FLEXingPatchFromBrowserItem(item));
+        }
+        [self reloadItems];
+        [self showPatchSavedToastForItem:item added:!wasSelected];
         return;
     }
 }
