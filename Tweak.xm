@@ -8,6 +8,7 @@
 
 
 #import "Interfaces.h"
+#import "Shared/FLEXingConfig.h"
 #import <rootless.h>
 #import <HBLog.h>
 
@@ -22,6 +23,9 @@ BOOL initialized = NO;
 id manager = nil;
 SEL show = nil;
 BOOL didAutoShowExplorer = NO;
+NSString *currentBundleIdentifier = nil;
+BOOL currentBundleAllowsFLEX = NO;
+BOOL currentBundleShouldAutoShow = NO;
 
 static NSHashTable *windowsWithGestures = nil;
 
@@ -57,7 +61,7 @@ inline BOOL isSpringBoardProcess() {
 }
 
 inline void enableNetworkMonitoringIfPossible() {
-    if (!manager) {
+    if (!manager || !FLEXingNetworkMonitoringEnabled()) {
         return;
     }
 
@@ -83,6 +87,16 @@ inline void enableNetworkMonitoringIfPossible() {
 }
 
 %ctor {
+    currentBundleIdentifier = NSBundle.mainBundle.bundleIdentifier ?: @"";
+    BOOL springBoardProcess = isSpringBoardProcess();
+    currentBundleAllowsFLEX = springBoardProcess || FLEXingIsBundleEnabled(currentBundleIdentifier);
+    currentBundleShouldAutoShow = FLEXingShouldAutoShowBundle(currentBundleIdentifier);
+
+    if (!currentBundleAllowsFLEX && !springBoardProcess) {
+        HBLogInfo(@"FLEXing: Disabled for %@. Enable this app in FLEXing Manager and restart it.", currentBundleIdentifier);
+        return;
+    }
+
 #if TARGET_OS_SIMULATOR
     NSString *standardPath = realPath(@"/Library/MobileSubstrate/DynamicLibraries/libFLEX.dylib");
     NSString *reflexPath =   realPath(@"/Library/MobileSubstrate/DynamicLibraries/libreflex.dylib");
@@ -120,14 +134,19 @@ inline void enableNetworkMonitoringIfPossible() {
     if (libflex) {
         // Hey Snapchat / Snap Inc devs,
         // This is so users don't get their accounts locked.
-        if (isLikelyUIProcess() && !isSnapchatApp()) {
+        if (isLikelyUIProcess() && !isSnapchatApp() && currentBundleAllowsFLEX) {
             handle = dlopen(libflex.UTF8String, RTLD_LAZY);
             
             if (libreflex) {
                 dlopen(libreflex.UTF8String, RTLD_NOW);
             }
 
-            HBLogInfo(@"FLEXing: Initialized");
+            HBLogInfo(@"FLEXing: Initialized for %@", currentBundleIdentifier);
+
+            NSString *savedAdjustments = FLEXingAdjustmentsForBundle(currentBundleIdentifier);
+            if (savedAdjustments.length > 0) {
+                HBLogInfo(@"FLEXing: Saved adjustments for %@: %@", currentBundleIdentifier, savedAdjustments);
+            }
         }
     }
 
@@ -152,7 +171,7 @@ inline void enableNetworkMonitoringIfPossible() {
 
 %hook UIWindow
 - (BOOL)_shouldCreateContextAsSecure {
-    return (initialized && [self isKindOfClass:FLXWindowClass()]) ? YES : %orig;
+    return (initialized && FLXWindowClass && [self isKindOfClass:FLXWindowClass()]) ? YES : %orig;
 }
 
 - (void)becomeKeyWindow {
@@ -163,9 +182,9 @@ inline void enableNetworkMonitoringIfPossible() {
     }
 
     BOOL needsGesture = ![windowsWithGestures containsObject:self];
-    BOOL isFLEXWindow = [self isKindOfClass:FLXWindowClass()];
+    BOOL isFLEXWindow = FLXWindowClass && [self isKindOfClass:FLXWindowClass()];
     BOOL isStatusBar  = [self isKindOfClass:[UIStatusBarWindow class]];
-    BOOL shouldAutoShow = !didAutoShowExplorer && !isSpringBoardProcess();
+    BOOL shouldAutoShow = !didAutoShowExplorer && !isSpringBoardProcess() && currentBundleAllowsFLEX && currentBundleShouldAutoShow;
 
     if (shouldAutoShow && !isFLEXWindow && manager && show) {
         didAutoShowExplorer = YES;
@@ -174,7 +193,7 @@ inline void enableNetworkMonitoringIfPossible() {
         });
     }
 
-    if (needsGesture && !isFLEXWindow && !isStatusBar) {
+    if (needsGesture && !isFLEXWindow && !isStatusBar && manager && show) {
         [windowsWithGestures addObject:self];
 
         // Add 3-finger long-press gesture for apps without a status bar
@@ -191,7 +210,7 @@ inline void enableNetworkMonitoringIfPossible() {
 - (id)initWithFrame:(CGRect)frame {
     self = %orig;
     
-    if (initialized) {
+    if (initialized && manager && show) {
         // Add long-press gesture to status bar
         [self addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:manager action:show]];
     }
@@ -242,7 +261,9 @@ inline void enableNetworkMonitoringIfPossible() {
 %ctor {
 #if TARGET_OS_SIMULATOR
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [manager performSelector:show];
+        if (initialized && manager && show) {
+            [manager performSelector:show];
+        }
     });
 #endif
 }
