@@ -1,13 +1,14 @@
 # FLEXing
 
-FLEXing is a rootless iOS tweak package that loads the FLEX explorer into selected applications.
+FLEXing is a rootless iOS tweak package that loads the FLEX explorer into applications.
 
-This fork adds a homescreen manager app named **FLEXing**. Open the manager, choose a running app or any detected installed app, enable FLEX for that bundle id, choose whether FLEX should open automatically, and save notes or adjustment details for the next launch.
+This fork adds a homescreen manager app named **FLEXing**. Open the manager, choose a running app or any detected installed app, set an override for that bundle id, choose whether FLEX should open automatically, and save notes or adjustment details for the next launch.
 
 ## What changed
 
-- FLEX no longer auto loads into every app by default.
-- Apps are disabled until selected in the FLEXing manager app.
+- FLEX keeps the original FLEXing behavior by default.
+- FLEX is enabled unless you explicitly turn a bundle id off in the manager.
+- Auto Show is enabled unless you explicitly turn it off for that bundle id.
 - Per-app settings are stored at:
 
 ```text
@@ -18,7 +19,11 @@ This fork adds a homescreen manager app named **FLEXing**. Open the manager, cho
 - The tweak reads the saved profile when the target app starts.
 - The manager app can list running apps and all detected installed apps.
 
-## Build
+## GitHub Actions build
+
+Use the **Build rootless DEB** workflow from the Actions tab to build the package from GitHub. The generated `.deb` is uploaded as an artifact named `flexing-rootless-deb`.
+
+## Local build
 
 ```bash
 make clean package
@@ -38,11 +43,11 @@ sbreload
 uicache -a
 ```
 
-After installing, open **FLEXing** from the homescreen, enable the target app, then fully restart that target app.
+After installing, open **FLEXing** from the homescreen if you want to override a specific app, then fully restart that target app.
 
 ## Notes
 
-The saved adjustments field is intentionally stored as text in the shared plist. Use it for selectors, class names, offsets, notes, or manual adjustment details you want available next launch. The tweak logs saved adjustment text when it initializes for that bundle id.
+The saved adjustments field is stored in the shared plist for the target bundle id. Use it for selectors, class names, offsets, notes, or manual adjustment details you want available next launch.
 
 # License
 
