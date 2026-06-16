@@ -18,6 +18,9 @@ text = text.replace(
 
 # Keep the FLEXing row on the stable lightweight menu. The searchable browser is
 # too heavy to open directly from the FLEX row and can crash apps on tap.
+# Use componentsJoinedByString instead of a large format string with embedded
+# newline escapes, so the generated Objective-C source cannot split a string
+# literal and fail to compile.
 stable_open = r'''static void FLEXingOpenPanelMenu(__kindof UITableViewController *host) {
     NSString *bundleIdentifier = FLEXingCurrentBundleIdentifier();
     BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
@@ -25,13 +28,18 @@ stable_open = r'''static void FLEXingOpenPanelMenu(__kindof UITableViewControlle
     NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
     NSUInteger patchCount = FLEXingPatchesForBundle(bundleIdentifier).count;
 
-    NSString *message = [NSString stringWithFormat:@"%@\n%@\n\nEnabled: %@\nAuto Show: %@\nSaved Patches: %lu\n\nSaved Adjustments:\n%@",
-                         @"Settings",
-                         bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier",
-                         enabled ? @"On" : @"Off",
-                         autoShow ? @"On" : @"Off",
-                         (unsigned long)patchCount,
-                         adjustments.length ? adjustments : @"None"];
+    NSString *lineBreak = [NSString stringWithFormat:@"%C", (unichar)10];
+    NSString *message = [@[
+        @"Settings",
+        bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier",
+        @"",
+        [NSString stringWithFormat:@"Enabled: %@", enabled ? @"On" : @"Off"],
+        [NSString stringWithFormat:@"Auto Show: %@", autoShow ? @"On" : @"Off"],
+        [NSString stringWithFormat:@"Saved Patches: %lu", (unsigned long)patchCount],
+        @"",
+        @"Saved Adjustments:",
+        adjustments.length ? adjustments : @"None"
+    ] componentsJoinedByString:lineBreak];
 
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"FLEXing" message:message preferredStyle:UIAlertControllerStyleActionSheet];
 
@@ -81,7 +89,7 @@ text = re.sub(
 )
 
 # Retain the custom row block. If FLEX does not copy the block internally, a
-# temporary stack block can be invalid by the time the row is tapped.
+temporary stack block can be invalid by the time the row is tapped.
 if "static FLEXingGlobalsRowAction flexingPanelEntryAction = nil;" not in text:
     text = text.replace(
         "typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\n",
