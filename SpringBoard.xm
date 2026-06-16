@@ -36,7 +36,7 @@
 // Runs in apps; receives status bar events
 %hook UIStatusBarManager
 - (void)handleTapAction:(UIStatusBarTapAction *)action {
-    if (action.type == kFLEXLongPressGesture) {
+    if (action.type == kFLEXLongPressGesture && manager && show) {
         [manager performSelector:show];
     } else {
         %orig(action);
@@ -49,7 +49,9 @@
 %hook SpringBoard
 - (void)applicationDidFinishLaunching:(id)arg {
     %orig;
-    [manager performSelector:show];
+    if (manager && show) {
+        [manager performSelector:show];
+    }
 }
 %end
 #endif
