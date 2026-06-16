@@ -4,6 +4,7 @@
 //
 
 #import "FLEXingConfig.h"
+#import <CoreFoundation/CoreFoundation.h>
 
 NSString * const FLEXingPreferencesChangedNotification = @"com.github.devnoname120.flexing.preferenceschanged";
 
