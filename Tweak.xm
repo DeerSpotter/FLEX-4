@@ -33,6 +33,10 @@ static id (*FLXGetManager)();
 static SEL (*FLXRevealSEL)();
 static Class (*FLXWindowClass)();
 
+inline BOOL isFLEXingManagerProcess() {
+    return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.github.devnoname120.flexing.manager"];
+}
+
 /// This isn't perfect, but works for most cases as intended
 inline bool isLikelyUIProcess() {
     NSString *executablePath = NSProcessInfo.processInfo.arguments[0];
@@ -44,6 +48,7 @@ inline bool isLikelyUIProcess() {
         [executablePath containsString:@"/data/Containers/Bundle/Application"];
 #else
         [executablePath hasPrefix:@"/var/containers/Bundle/Application"] ||
+        [executablePath hasPrefix:@"/var/jb/Applications"] ||
         [executablePath containsString:@"/procursus/Applications"];
 #endif
 }
@@ -88,6 +93,12 @@ inline void enableNetworkMonitoringIfPossible() {
 
 %ctor {
     currentBundleIdentifier = NSBundle.mainBundle.bundleIdentifier ?: @"";
+
+    if (isFLEXingManagerProcess()) {
+        HBLogInfo(@"FLEXing: Skipping manager app process.");
+        return;
+    }
+
     BOOL springBoardProcess = isSpringBoardProcess();
     currentBundleAllowsFLEX = springBoardProcess || FLEXingIsBundleEnabled(currentBundleIdentifier);
     currentBundleShouldAutoShow = FLEXingShouldAutoShowBundle(currentBundleIdentifier);
@@ -171,13 +182,16 @@ inline void enableNetworkMonitoringIfPossible() {
 
 %hook UIWindow
 - (BOOL)_shouldCreateContextAsSecure {
+    if (isFLEXingManagerProcess()) {
+        return %orig;
+    }
     return (initialized && FLXWindowClass && [self isKindOfClass:FLXWindowClass()]) ? YES : %orig;
 }
 
 - (void)becomeKeyWindow {
     %orig;
 
-    if (!initialized) {
+    if (isFLEXingManagerProcess() || !initialized) {
         return;
     }
 
@@ -210,7 +224,7 @@ inline void enableNetworkMonitoringIfPossible() {
 - (id)initWithFrame:(CGRect)frame {
     self = %orig;
     
-    if (initialized && manager && show) {
+    if (!isFLEXingManagerProcess() && initialized && manager && show) {
         // Add long-press gesture to status bar
         [self addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:manager action:show]];
     }
@@ -228,7 +242,7 @@ inline void enableNetworkMonitoringIfPossible() {
 %hook _UISheetPresentationController
 - (id)initWithPresentedViewController:(id)present presentingViewController:(id)presenter {
     self = %orig;
-    if ([present isKindOfClass:%c(FLEXNavigationController)]) {
+    if (!isFLEXingManagerProcess() && [present isKindOfClass:%c(FLEXNavigationController)]) {
         // Enable half height sheet
         if ([self respondsToSelector:@selector(_presentsAtStandardHalfHeight)]) {
             self._presentsAtStandardHalfHeight = YES;
@@ -261,7 +275,7 @@ inline void enableNetworkMonitoringIfPossible() {
 %ctor {
 #if TARGET_OS_SIMULATOR
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (initialized && manager && show) {
+        if (!isFLEXingManagerProcess() && initialized && manager && show) {
             [manager performSelector:show];
         }
     });
