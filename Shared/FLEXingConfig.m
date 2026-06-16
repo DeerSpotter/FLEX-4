@@ -51,6 +51,15 @@ static NSDictionary *FLEXingApplicationsDictionary(void) {
     return [applications isKindOfClass:NSDictionary.class] ? applications : @{};
 }
 
+BOOL FLEXingHasSettingsForBundle(NSString *bundleIdentifier) {
+    if (bundleIdentifier.length == 0) {
+        return NO;
+    }
+
+    NSDictionary *settings = FLEXingApplicationsDictionary()[bundleIdentifier];
+    return [settings isKindOfClass:NSDictionary.class];
+}
+
 NSDictionary *FLEXingSettingsForBundle(NSString *bundleIdentifier) {
     if (bundleIdentifier.length == 0) {
         return @{};
@@ -63,7 +72,7 @@ NSDictionary *FLEXingSettingsForBundle(NSString *bundleIdentifier) {
 BOOL FLEXingIsBundleEnabled(NSString *bundleIdentifier) {
     NSDictionary *settings = FLEXingSettingsForBundle(bundleIdentifier);
     NSNumber *enabled = settings[FLEXingEnabledKey];
-    return [enabled respondsToSelector:@selector(boolValue)] ? enabled.boolValue : NO;
+    return [enabled respondsToSelector:@selector(boolValue)] ? enabled.boolValue : YES;
 }
 
 BOOL FLEXingShouldAutoShowBundle(NSString *bundleIdentifier) {
