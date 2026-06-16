@@ -6,7 +6,11 @@ if [ ! -n "${THEOS:-}" ]; then
   exit 1
 fi
 
-make clean package
+: "${ARCHS:=arm64}"
+export ARCHS
+
+echo "Building FLEXing with ARCHS=$ARCHS"
+make clean package ARCHS="$ARCHS"
 
 echo "Built packages:"
 ls -1 packages/*.deb
