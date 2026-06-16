@@ -22,7 +22,11 @@ BOOL FLEXingIsBundleEnabled(NSString *bundleIdentifier);
 BOOL FLEXingShouldAutoShowBundle(NSString *bundleIdentifier);
 BOOL FLEXingNetworkMonitoringEnabled(void);
 NSString *FLEXingAdjustmentsForBundle(NSString *bundleIdentifier);
+NSArray<NSDictionary *> *FLEXingPatchesForBundle(NSString *bundleIdentifier);
 BOOL FLEXingSaveSettingsForBundle(NSString *bundleIdentifier, BOOL enabled, BOOL autoShow, NSString *adjustments);
+BOOL FLEXingSavePatchesForBundle(NSString *bundleIdentifier, NSArray<NSDictionary *> *patches);
+BOOL FLEXingUpsertPatchForBundle(NSString *bundleIdentifier, NSDictionary *patch);
+BOOL FLEXingRemovePatchForBundle(NSString *bundleIdentifier, NSString *patchIdentifier);
 
 #ifdef __cplusplus
 }
