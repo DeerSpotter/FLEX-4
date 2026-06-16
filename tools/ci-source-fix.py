@@ -89,7 +89,7 @@ text = re.sub(
 )
 
 # Retain the custom row block. If FLEX does not copy the block internally, a
-temporary stack block can be invalid by the time the row is tapped.
+# temporary stack block can be invalid by the time the row is tapped.
 if "static FLEXingGlobalsRowAction flexingPanelEntryAction = nil;" not in text:
     text = text.replace(
         "typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\n",
