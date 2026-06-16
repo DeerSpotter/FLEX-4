@@ -10,6 +10,8 @@
 #import "Shared/FLEXingConfig.h"
 #import <rootless.h>
 #import <HBLog.h>
+#import <objc/runtime.h>
+#import <mach-o/dyld.h>
 
 #if TARGET_OS_SIMULATOR
 #import <UIKit/UIFunctions.h>
@@ -104,47 +106,215 @@ static NSString *FLEXingDisplayNameForCurrentProcess(void) {
     return displayName;
 }
 
-static void FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString *note) {
-    NSString *bundleIdentifier = currentBundleIdentifier.length ? currentBundleIdentifier : (NSBundle.mainBundle.bundleIdentifier ?: @"");
-    FLEXingSaveSettingsForBundle(bundleIdentifier, enabled, autoShow, note ?: FLEXingAdjustmentsForBundle(bundleIdentifier));
+static NSString *FLEXingCurrentBundleIdentifier(void) {
+    return currentBundleIdentifier.length ? currentBundleIdentifier : (NSBundle.mainBundle.bundleIdentifier ?: @"");
+}
+
+static BOOL FLEXingSaveCurrentAppSettings(BOOL enabled, BOOL autoShow, NSString *note) {
+    NSString *bundleIdentifier = FLEXingCurrentBundleIdentifier();
+    BOOL saved = FLEXingSaveSettingsForBundle(bundleIdentifier, enabled, autoShow, note ?: FLEXingAdjustmentsForBundle(bundleIdentifier));
     currentBundleAllowsFLEX = enabled;
     currentBundleShouldAutoShow = autoShow;
+    return saved;
 }
 
-static void FLEXingShowResult(UIViewController *presenter, NSString *title, NSString *message) {
-    if (!presenter) {
-        return;
+@interface FLEXingBrowserItem : NSObject
+@property (nonatomic, copy) NSString *title;
+@property (nonatomic, copy) NSString *subtitle;
+@property (nonatomic, copy) NSString *section;
+@property (nonatomic, copy) NSString *kind;
++ (instancetype)itemWithTitle:(NSString *)title subtitle:(NSString *)subtitle section:(NSString *)section kind:(NSString *)kind;
+@end
+
+@implementation FLEXingBrowserItem
++ (instancetype)itemWithTitle:(NSString *)title subtitle:(NSString *)subtitle section:(NSString *)section kind:(NSString *)kind {
+    FLEXingBrowserItem *item = [FLEXingBrowserItem new];
+    item.title = title ?: @"";
+    item.subtitle = subtitle ?: @"";
+    item.section = section ?: @"";
+    item.kind = kind ?: @"";
+    return item;
+}
+@end
+
+@interface FLEXingBrowserViewController : UITableViewController <UISearchBarDelegate>
+@property (nonatomic, strong) UISearchBar *searchBar;
+@property (nonatomic, strong) NSArray<FLEXingBrowserItem *> *allItems;
+@property (nonatomic, strong) NSArray<FLEXingBrowserItem *> *filteredItems;
+@property (nonatomic, copy) NSString *query;
+@end
+
+@implementation FLEXingBrowserViewController
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) {
+        self.title = @"FLEXing";
+        self.query = @"";
     }
-
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    [presenter presentViewController:alert animated:YES completion:nil];
+    return self;
 }
 
-static void FLEXingOpenPanelMenu(__kindof UITableViewController *host) {
-    UIViewController *presenter = (UIViewController *)host;
-    NSString *bundleIdentifier = currentBundleIdentifier.length ? currentBundleIdentifier : (NSBundle.mainBundle.bundleIdentifier ?: @"");
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 56.0)];
+    self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.searchBar.delegate = self;
+    self.searchBar.placeholder = @"Search class, library, setting...";
+    self.tableView.tableHeaderView = self.searchBar;
+
+    [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"FLEXingCell"];
+    [self reloadItems];
+}
+
+- (void)reloadItems {
+    NSMutableArray<FLEXingBrowserItem *> *items = [NSMutableArray array];
+    NSString *bundleIdentifier = FLEXingCurrentBundleIdentifier();
     BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
     BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
     NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
 
-    NSString *message = [NSString stringWithFormat:@"%@\n%@\n\nEnabled: %@\nAuto Show: %@\n\nSaved Adjustments:\n%@", FLEXingDisplayNameForCurrentProcess(), bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier", enabled ? @"On" : @"Off", autoShow ? @"On" : @"Off", adjustments.length ? adjustments : @"None"];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:FLEXingDisplayNameForCurrentProcess() subtitle:bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier" section:@"Current App" kind:@"info"]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:(enabled ? @"Enabled: On" : @"Enabled: Off") subtitle:@"Tap to toggle FLEX for this app on next launch" section:@"Settings" kind:@"toggleEnabled"]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:(autoShow ? @"Auto Show: On" : @"Auto Show: Off") subtitle:@"Tap to toggle automatic opening on next launch" section:@"Settings" kind:@"toggleAutoShow"]];
+    [items addObject:[FLEXingBrowserItem itemWithTitle:@"Saved Adjustments" subtitle:(adjustments.length ? adjustments : @"None. Tap to edit saved text for this app.") section:@"Settings" kind:@"editAdjustments"]];
 
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"FLEXing" message:message preferredStyle:UIAlertControllerStyleActionSheet];
+    uint32_t imageCount = _dyld_image_count();
+    for (uint32_t index = 0; index < imageCount; index++) {
+        const char *imageName = _dyld_get_image_name(index);
+        if (!imageName) {
+            continue;
+        }
+        NSString *path = [NSString stringWithUTF8String:imageName];
+        NSString *name = path.lastPathComponent.stringByDeletingPathExtension;
+        if (name.length == 0) {
+            name = path.lastPathComponent;
+        }
+        [items addObject:[FLEXingBrowserItem itemWithTitle:name subtitle:path section:@"Libraries" kind:@"library"]];
+    }
 
-    [alert addAction:[UIAlertAction actionWithTitle:(enabled ? @"Disable FLEX For This App" : @"Enable FLEX For This App") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    int classCount = objc_getClassList(NULL, 0);
+    if (classCount > 0) {
+        Class *classes = (Class *)calloc((NSUInteger)classCount, sizeof(Class));
+        int actualCount = objc_getClassList(classes, classCount);
+        NSMutableArray<NSString *> *classNames = [NSMutableArray arrayWithCapacity:(NSUInteger)actualCount];
+        for (int index = 0; index < actualCount; index++) {
+            const char *name = class_getName(classes[index]);
+            if (name) {
+                [classNames addObject:[NSString stringWithUTF8String:name]];
+            }
+        }
+        free(classes);
+
+        [classNames sortUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+        for (NSString *className in classNames) {
+            [items addObject:[FLEXingBrowserItem itemWithTitle:className subtitle:@"Obj-C Class" section:@"Obj-C Classes" kind:@"class"]];
+        }
+    }
+
+    self.allItems = items;
+    [self applyFilter];
+}
+
+- (void)applyFilter {
+    NSString *trimmed = [self.query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length == 0) {
+        self.filteredItems = self.allItems;
+    } else {
+        NSString *lower = trimmed.lowercaseString;
+        NSMutableArray<FLEXingBrowserItem *> *matches = [NSMutableArray array];
+        for (FLEXingBrowserItem *item in self.allItems) {
+            NSString *haystack = [NSString stringWithFormat:@"%@ %@ %@ %@", item.title ?: @"", item.subtitle ?: @"", item.section ?: @"", item.kind ?: @""];
+            if ([haystack.lowercaseString containsString:lower]) {
+                [matches addObject:item];
+            }
+        }
+        self.filteredItems = matches;
+    }
+    [self.tableView reloadData];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    NSMutableOrderedSet<NSString *> *sections = [NSMutableOrderedSet orderedSet];
+    for (FLEXingBrowserItem *item in self.filteredItems) {
+        [sections addObject:item.section ?: @""];
+    }
+    return sections.count;
+}
+
+- (NSString *)sectionTitleAtIndex:(NSInteger)sectionIndex {
+    NSMutableOrderedSet<NSString *> *sections = [NSMutableOrderedSet orderedSet];
+    for (FLEXingBrowserItem *item in self.filteredItems) {
+        [sections addObject:item.section ?: @""];
+    }
+    if (sectionIndex < 0 || sectionIndex >= (NSInteger)sections.count) {
+        return @"";
+    }
+    return sections[(NSUInteger)sectionIndex];
+}
+
+- (NSArray<FLEXingBrowserItem *> *)itemsForSection:(NSInteger)sectionIndex {
+    NSString *section = [self sectionTitleAtIndex:sectionIndex];
+    NSMutableArray<FLEXingBrowserItem *> *items = [NSMutableArray array];
+    for (FLEXingBrowserItem *item in self.filteredItems) {
+        if ([item.section isEqualToString:section]) {
+            [items addObject:item];
+        }
+    }
+    return items;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return [self itemsForSection:section].count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return [self sectionTitleAtIndex:section];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"FLEXingCell" forIndexPath:indexPath];
+    FLEXingBrowserItem *item = [self itemsForSection:indexPath.section][(NSUInteger)indexPath.row];
+
+    cell.textLabel.text = item.title;
+    cell.textLabel.numberOfLines = 2;
+    cell.detailTextLabel.text = nil;
+    cell.accessoryType = ([item.kind isEqualToString:@"toggleEnabled"] || [item.kind isEqualToString:@"toggleAutoShow"] || [item.kind isEqualToString:@"editAdjustments"]) ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
+
+    if (item.subtitle.length > 0) {
+        cell.textLabel.text = [NSString stringWithFormat:@"%@\n%@", item.title, item.subtitle];
+    }
+
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    FLEXingBrowserItem *item = [self itemsForSection:indexPath.section][(NSUInteger)indexPath.row];
+    NSString *bundleIdentifier = FLEXingCurrentBundleIdentifier();
+    BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
+    BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
+    NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
+
+    if ([item.kind isEqualToString:@"toggleEnabled"]) {
         BOOL nextEnabled = !enabled;
         FLEXingSaveCurrentAppSettings(nextEnabled, autoShow, adjustments);
-        FLEXingShowResult(presenter, @"Saved", nextEnabled ? @"FLEX will stay enabled for this app." : @"FLEX will be disabled for this app after restart.");
-    }]];
+        [self reloadItems];
+        return;
+    }
 
-    [alert addAction:[UIAlertAction actionWithTitle:(autoShow ? @"Turn Auto Show Off" : @"Turn Auto Show On") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    if ([item.kind isEqualToString:@"toggleAutoShow"]) {
         BOOL nextAutoShow = !autoShow;
         FLEXingSaveCurrentAppSettings(enabled, nextAutoShow, adjustments);
-        FLEXingShowResult(presenter, @"Saved", nextAutoShow ? @"FLEX will auto show next launch." : @"FLEX will not auto show next launch.");
-    }]];
+        [self reloadItems];
+        return;
+    }
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"Save Note / Adjustment Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    if ([item.kind isEqualToString:@"editAdjustments"]) {
         UIAlertController *editor = [UIAlertController alertControllerWithTitle:@"Saved Adjustments" message:@"Stored for this app. Execution support can use this field later." preferredStyle:UIAlertControllerStyleAlert];
         [editor addTextFieldWithConfigurationHandler:^(UITextField *textField) {
             textField.placeholder = @"Adjustment text";
@@ -154,21 +324,32 @@ static void FLEXingOpenPanelMenu(__kindof UITableViewController *host) {
         [editor addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *saveAction) {
             NSString *text = editor.textFields.firstObject.text ?: @"";
             FLEXingSaveCurrentAppSettings(enabled, autoShow, text);
-            FLEXingShowResult(presenter, @"Saved", @"Adjustment text saved for this app.");
+            [self reloadItems];
         }]];
-        [presenter presentViewController:editor animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-
-    UIPopoverPresentationController *popover = alert.popoverPresentationController;
-    if (popover) {
-        popover.sourceView = host.tableView;
-        popover.sourceRect = CGRectMake(CGRectGetMidX(host.tableView.bounds), CGRectGetMidY(host.tableView.bounds), 1, 1);
-        popover.permittedArrowDirections = 0;
+        [self presentViewController:editor animated:YES completion:nil];
+        return;
     }
+}
 
-    [presenter presentViewController:alert animated:YES completion:nil];
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    self.query = searchText ?: @"";
+    [self applyFilter];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
+
+@end
+
+static void FLEXingOpenPanelMenu(__kindof UITableViewController *host) {
+    FLEXingBrowserViewController *browser = [[FLEXingBrowserViewController alloc] init];
+    if (host.navigationController) {
+        [host.navigationController pushViewController:browser animated:YES];
+    } else {
+        UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:browser];
+        [(UIViewController *)host presentViewController:navigationController animated:YES completion:nil];
+    }
 }
 
 static void FLEXingRegisterPanelEntryIfPossible(void) {
