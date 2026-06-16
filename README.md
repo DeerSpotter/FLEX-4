@@ -1,13 +1,49 @@
 # FLEXing
 
-FLEXing is a basic tweak to activate the FLEX explorer via Activator, long pressing on the status bar, or holding the screen with 3 fingers (depending on your iOS version you will want to use the appropriate version from the releases tab).
+FLEXing is a rootless iOS tweak package that loads the FLEX explorer into selected applications.
 
-### Isn't this the same thing as FLEXible?
+This fork adds a homescreen manager app named **FLEXing**. Open the manager, choose a running app or any detected installed app, enable FLEX for that bundle id, choose whether FLEX should open automatically, and save notes or adjustment details for the next launch.
 
-Well, yes, but FLEXible 1) isn't open source, and 2) forces you turn it on on a per-application basis and deal with re-opening the explorer every time you start or return to an application unless you want to turn it back off.
+## What changed
 
-For someone like me who uses FLEX all the time in the apps I also use all the time, it's a little more than annoying to turn it on every time I want to use it or to have it pop up every time I open the app.
+- FLEX no longer auto loads into every app by default.
+- Apps are disabled until selected in the FLEXing manager app.
+- Per-app settings are stored at:
+
+```text
+/var/mobile/Library/Preferences/com.github.devnoname120.flexing.plist
+```
+
+- Saved settings are keyed by bundle id.
+- The tweak reads the saved profile when the target app starts.
+- The manager app can list running apps and all detected installed apps.
+
+## Build
+
+```bash
+make clean package
+```
+
+The package is rootless by default on device builds:
+
+```make
+export THEOS_PACKAGE_SCHEME = rootless
+```
+
+## Install
+
+```bash
+dpkg -i packages/*.deb
+sbreload
+uicache -a
+```
+
+After installing, open **FLEXing** from the homescreen, enable the target app, then fully restart that target app.
+
+## Notes
+
+The saved adjustments field is intentionally stored as text in the shared plist. Use it for selectors, class names, offsets, notes, or manual adjustment details you want available next launch. The tweak logs saved adjustment text when it initializes for that bundle id.
 
 # License
 
-BSD for my code and for FLEX itself.
+BSD for this code and for FLEX itself.
