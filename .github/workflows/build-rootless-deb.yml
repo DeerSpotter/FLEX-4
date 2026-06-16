@@ -1,15 +1,27 @@
 name: Build rootless DEB
 
+run-name: ${{ github.event_name }} ${{ github.sha }}
+
 on:
   push:
+    branches:
+      - rootless
   workflow_dispatch:
+
+concurrency:
+  group: build-rootless-deb-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build FLEXing rootless package
     runs-on: macos-latest
+    env:
+      THEOS_PACKAGE_SCHEME: rootless
+      ARCHS: arm64
 
     steps:
       - name: Checkout
@@ -29,17 +41,30 @@ jobs:
           altlist: true
           altlist-src: 'opa334/AltList'
           altlist-branch: 'main'
-      
-      - name: Build rootless package
-        run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
-      - name: Upload DEB artifacts
+      - name: Patch source compatibility
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('Tweak.xm')
+          text = path.read_text()
+          text = text.replace('Class cls = (__bridge Class)classLookup[className];', 'Class cls = (Class)classLookup[className];')
+          path.write_text(text)
+          PY
+
+      - name: Build rootless package
+        shell: bash
+        run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ARCHS="$ARCHS"
+
+      - name: Upload DEB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flexing-rootless-debs
-          path: |
-            packages/*.deb
+          name: flexing-rootless-deb
+          path: packages/*.deb
           if-no-files-found: error
+          retention-days: 30
 
       - name: Publish release
         if: github.event_name == 'workflow_dispatch'
