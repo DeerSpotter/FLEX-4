@@ -48,17 +48,85 @@ jobs:
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           path = Path('Tweak.xm')
           text = path.read_text()
+
           text = text.replace('Class cls = (__bridge Class)classLookup[className];', 'Class cls = (Class)classLookup[className];')
+
           text = text.replace(
               'typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\n',
               'typedef void (^FLEXingGlobalsRowAction)(__kindof UITableViewController *host);\nstatic FLEXingGlobalsRowAction flexingPanelEntryAction = nil;\n'
           )
+
           text = text.replace(
               '    FLEXingGlobalsRowAction action = ^(__kindof UITableViewController *host) {\n        FLEXingOpenPanelMenu(host);\n    };\n\n    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"FLEXing", action);',
               '    if (!flexingPanelEntryAction) {\n        flexingPanelEntryAction = [^(__kindof UITableViewController *host) {\n            FLEXingOpenPanelMenu(host);\n        } copy];\n    }\n\n    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"FLEXing", flexingPanelEntryAction);'
           )
+
+          stable_open = r'''static void FLEXingOpenPanelMenu(__kindof UITableViewController *host) {
+    NSString *bundleIdentifier = FLEXingCurrentBundleIdentifier();
+    BOOL enabled = FLEXingIsBundleEnabled(bundleIdentifier);
+    BOOL autoShow = FLEXingShouldAutoShowBundle(bundleIdentifier);
+    NSString *adjustments = FLEXingAdjustmentsForBundle(bundleIdentifier);
+    NSUInteger patchCount = FLEXingPatchesForBundle(bundleIdentifier).count;
+
+    NSString *message = [NSString stringWithFormat:@"%@\n%@\n\nEnabled: %@\nAuto Show: %@\nSaved Patches: %lu\n\nSaved Adjustments:\n%@",
+                         @"Settings",
+                         bundleIdentifier.length ? bundleIdentifier : @"No bundle identifier",
+                         enabled ? @"On" : @"Off",
+                         autoShow ? @"On" : @"Off",
+                         (unsigned long)patchCount,
+                         adjustments.length ? adjustments : @"None"];
+
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"FLEXing" message:message preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [menu addAction:[UIAlertAction actionWithTitle:(enabled ? @"Disable FLEX For This App" : @"Enable FLEX For This App") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        FLEXingSaveCurrentAppSettings(!enabled, autoShow, adjustments);
+    }]];
+
+    [menu addAction:[UIAlertAction actionWithTitle:(autoShow ? @"Turn Auto Show Off" : @"Turn Auto Show On") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        FLEXingSaveCurrentAppSettings(enabled, !autoShow, adjustments);
+    }]];
+
+    [menu addAction:[UIAlertAction actionWithTitle:@"Saved Patches" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        FLEXingPatchListViewController *patches = [[FLEXingPatchListViewController alloc] init];
+        if (host.navigationController) {
+            [host.navigationController pushViewController:patches animated:YES];
+        } else {
+            UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:patches];
+            [(UIViewController *)host presentViewController:navigationController animated:YES completion:nil];
+        }
+    }]];
+
+    [menu addAction:[UIAlertAction actionWithTitle:@"Save Note / Adjustment Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UIAlertController *editor = [UIAlertController alertControllerWithTitle:@"Saved Adjustments" message:@"Stored for this app. Execution support can use this field later." preferredStyle:UIAlertControllerStyleAlert];
+        [editor addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+            textField.placeholder = @"Adjustment text";
+            textField.text = adjustments ?: @"";
+        }];
+        [editor addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [editor addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *saveAction) {
+            NSString *text = editor.textFields.firstObject.text ?: @"";
+            FLEXingSaveCurrentAppSettings(enabled, autoShow, text);
+        }]];
+        [(UIViewController *)host presentViewController:editor animated:YES completion:nil];
+    }]];
+
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [(UIViewController *)host presentViewController:menu animated:YES completion:nil];
+}
+'''
+
+          text = re.sub(
+              r'static void FLEXingOpenPanelMenu\(__kindof UITableViewController \*host\) \{.*?\n\}',
+              stable_open,
+              text,
+              count=1,
+              flags=re.S,
+          )
+
           path.write_text(text)
           PY
 
