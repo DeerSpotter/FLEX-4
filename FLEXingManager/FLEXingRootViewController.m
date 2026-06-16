@@ -33,7 +33,6 @@ static NSString * const FLEXingAppExecutableKey = @"executable";
     [self.segmentedControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
     self.navigationItem.titleView = self.segmentedControl;
 
-    [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"ApplicationCell"];
     [self refreshApplications];
 }
 
@@ -216,7 +215,11 @@ static NSString * const FLEXingAppExecutableKey = @"executable";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"ApplicationCell" forIndexPath:indexPath];
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"ApplicationCell"];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"ApplicationCell"];
+    }
+
     NSDictionary *application = self.visibleApplications[indexPath.row];
 
     NSString *bundleIdentifier = application[FLEXingAppBundleIDKey];
