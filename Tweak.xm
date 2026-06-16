@@ -91,6 +91,163 @@ inline void enableNetworkMonitoringIfPossible() {
     }
 }
 
+static NSString *FLEXingDisplayNameForCurrentProcess(void) {
+    NSString *displayName = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+    if (displayName.length == 0) {
+        displayName = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleName"];
+    }
+    if (displayName.length == 0) {
+        displayName = currentBundleIdentifier ?: @"Current App";
+    }
+    return displayName;
+}
+
+@interface FLEXingInlineSettingsViewController : UIViewController
+@property (nonatomic, copy) NSString *bundleIdentifier;
+@property (nonatomic, strong) UISwitch *enabledSwitch;
+@property (nonatomic, strong) UISwitch *autoShowSwitch;
+@property (nonatomic, strong) UITextView *adjustmentsView;
+@end
+
+@implementation FLEXingInlineSettingsViewController
+
+- (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier {
+    self = [super initWithNibName:nil bundle:nil];
+    if (self) {
+        _bundleIdentifier = bundleIdentifier.length > 0 ? [bundleIdentifier copy] : @"";
+    }
+    return self;
+}
+
+- (UILabel *)labelWithText:(NSString *)text font:(UIFont *)font color:(UIColor *)color {
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    label.text = text;
+    label.font = font;
+    label.textColor = color;
+    label.numberOfLines = 0;
+    return label;
+}
+
+- (UIView *)rowWithTitle:(NSString *)title subtitle:(NSString *)subtitle switchControl:(UISwitch *)switchControl {
+    UIView *row = [[UIView alloc] initWithFrame:CGRectZero];
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    row.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    row.layer.cornerRadius = 12.0;
+
+    UILabel *titleLabel = [self labelWithText:title font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody] color:UIColor.labelColor];
+    UILabel *subtitleLabel = [self labelWithText:subtitle font:[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote] color:UIColor.secondaryLabelColor];
+
+    UIStackView *textStack = [[UIStackView alloc] initWithArrangedSubviews:@[titleLabel, subtitleLabel]];
+    textStack.translatesAutoresizingMaskIntoConstraints = NO;
+    textStack.axis = UILayoutConstraintAxisVertical;
+    textStack.spacing = 3.0;
+
+    switchControl.translatesAutoresizingMaskIntoConstraints = NO;
+    [row addSubview:textStack];
+    [row addSubview:switchControl];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [textStack.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:14.0],
+        [textStack.topAnchor constraintEqualToAnchor:row.topAnchor constant:12.0],
+        [textStack.bottomAnchor constraintEqualToAnchor:row.bottomAnchor constant:-12.0],
+        [switchControl.leadingAnchor constraintGreaterThanOrEqualToAnchor:textStack.trailingAnchor constant:12.0],
+        [switchControl.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-14.0],
+        [switchControl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor]
+    ]];
+
+    return row;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    self.title = @"FLEXing";
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(closeSettings)];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Save" style:UIBarButtonItemStyleDone target:self action:@selector(saveSettings)];
+
+    BOOL enabled = FLEXingIsBundleEnabled(self.bundleIdentifier);
+    BOOL autoShow = FLEXingShouldAutoShowBundle(self.bundleIdentifier);
+    NSString *adjustments = FLEXingAdjustmentsForBundle(self.bundleIdentifier);
+
+    self.enabledSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    self.enabledSwitch.on = enabled;
+    self.autoShowSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    self.autoShowSwitch.on = autoShow;
+
+    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
+    scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:scrollView];
+
+    UIStackView *stack = [[UIStackView alloc] initWithFrame:CGRectZero];
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 14.0;
+    stack.layoutMargins = UIEdgeInsetsMake(18.0, 18.0, 18.0, 18.0);
+    stack.layoutMarginsRelativeArrangement = YES;
+    [scrollView addSubview:stack];
+
+    UILabel *header = [self labelWithText:[NSString stringWithFormat:@"%@\n%@", FLEXingDisplayNameForCurrentProcess(), self.bundleIdentifier.length ? self.bundleIdentifier : @"No bundle identifier"] font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:UIColor.labelColor];
+    [stack addArrangedSubview:header];
+
+    UILabel *note = [self labelWithText:@"These settings are saved for this app and load the next time this app starts. FLEX stays available right here; the separate Home Screen manager is no longer required." font:[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote] color:UIColor.secondaryLabelColor];
+    [stack addArrangedSubview:note];
+
+    [stack addArrangedSubview:[self rowWithTitle:@"Enable FLEX" subtitle:@"Turn FLEXing on or off for this app on next launch." switchControl:self.enabledSwitch]];
+    [stack addArrangedSubview:[self rowWithTitle:@"Auto Show FLEX" subtitle:@"Open FLEX automatically when this app starts." switchControl:self.autoShowSwitch]];
+
+    UILabel *adjustmentsLabel = [self labelWithText:@"Saved Adjustments" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:UIColor.labelColor];
+    [stack addArrangedSubview:adjustmentsLabel];
+
+    self.adjustmentsView = [[UITextView alloc] initWithFrame:CGRectZero];
+    self.adjustmentsView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.adjustmentsView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    self.adjustmentsView.textColor = UIColor.labelColor;
+    self.adjustmentsView.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    self.adjustmentsView.layer.cornerRadius = 12.0;
+    self.adjustmentsView.textContainerInset = UIEdgeInsetsMake(12.0, 10.0, 12.0, 10.0);
+    self.adjustmentsView.text = adjustments.length ? adjustments : @"";
+    [self.adjustmentsView.heightAnchor constraintEqualToConstant:150.0].active = YES;
+    [stack addArrangedSubview:self.adjustmentsView];
+
+    UILabel *footer = [self labelWithText:@"For now this stores notes or future adjustment commands in the same plist FLEXing already reads. It does not need the crashing Home Screen app." font:[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote] color:UIColor.secondaryLabelColor];
+    [stack addArrangedSubview:footer];
+
+    UILayoutGuide *guide = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [scrollView.topAnchor constraintEqualToAnchor:guide.topAnchor],
+        [scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [stack.leadingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.leadingAnchor],
+        [stack.trailingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.trailingAnchor],
+        [stack.topAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.topAnchor],
+        [stack.bottomAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.bottomAnchor],
+        [stack.widthAnchor constraintEqualToAnchor:scrollView.frameLayoutGuide.widthAnchor]
+    ]];
+}
+
+- (void)closeSettings {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)saveSettings {
+    BOOL saved = FLEXingSaveSettingsForBundle(self.bundleIdentifier, self.enabledSwitch.on, self.autoShowSwitch.on, self.adjustmentsView.text ?: @"");
+    currentBundleAllowsFLEX = self.enabledSwitch.on;
+    currentBundleShouldAutoShow = self.autoShowSwitch.on;
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:saved ? @"Saved" : @"Save Failed" message:saved ? @"FLEXing settings were saved for this app. Some changes apply next launch." : @"FLEXing could not write the preferences plist." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        if (saved) {
+            [self dismissViewControllerAnimated:YES completion:nil];
+        }
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+@end
+
 %ctor {
     currentBundleIdentifier = NSBundle.mainBundle.bundleIdentifier ?: @"";
 
@@ -234,8 +391,33 @@ inline void enableNetworkMonitoringIfPossible() {
 %end
 
 %hook FLEXExplorerViewController
+- (void)viewDidLoad {
+    %orig;
+    [self flexing_installInlineSettingsButton];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    %orig(animated);
+    [self flexing_installInlineSettingsButton];
+}
+
 - (BOOL)_canShowWhileLocked {
     return YES;
+}
+
+%new(v@:@)
+- (void)flexing_openInlineSettings:(id)sender {
+    NSString *bundleIdentifier = currentBundleIdentifier.length ? currentBundleIdentifier : (NSBundle.mainBundle.bundleIdentifier ?: @"");
+    FLEXingInlineSettingsViewController *settings = [[FLEXingInlineSettingsViewController alloc] initWithBundleIdentifier:bundleIdentifier];
+    UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:settings];
+    navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
+    [(UIViewController *)self presentViewController:navigationController animated:YES completion:nil];
+}
+
+%new(v@:)
+- (void)flexing_installInlineSettingsButton {
+    UIBarButtonItem *item = [[UIBarButtonItem alloc] initWithTitle:@"FLEXing" style:UIBarButtonItemStylePlain target:self action:@selector(flexing_openInlineSettings:)];
+    self.navigationItem.leftBarButtonItem = item;
 }
 %end
 
