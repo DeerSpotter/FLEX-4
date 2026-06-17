@@ -7,8 +7,16 @@ else
 	export TARGET = iphone:latest:15.0
 endif
 
+ifneq ($(wildcard tools/flex4-app-injection-fix.py),)
+$(shell python3 tools/flex4-app-injection-fix.py >/dev/null 2>&1 || true)
+endif
+
 ifneq ($(wildcard tools/add-setter-value-search.py),)
 $(shell python3 tools/add-setter-value-search.py >/dev/null 2>&1 || true)
+endif
+
+ifneq ($(wildcard tools/flex4-beta-polish.py),)
+$(shell python3 tools/flex4-beta-polish.py >/dev/null 2>&1 || true)
 endif
 
 INSTALL_TARGET_PROCESSES = SpringBoard
