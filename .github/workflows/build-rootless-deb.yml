@@ -39,6 +39,9 @@ jobs:
       - name: Patch FLEX 4 Beta polish
         run: python3 tools/flex4-beta-polish.py
 
+      - name: Fix override message newline
+        run: python3 tools/fix-override-message-newline.py
+
       - name: Build rootless package
         run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
