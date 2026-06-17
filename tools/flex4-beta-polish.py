@@ -41,13 +41,13 @@ patch_once(
     NSArray *flex4OverriddenKeys = [NSUserDefaults.standardUserDefaults arrayForKey:@"FLEX4BetaOverriddenUserDefaultsKeys"] ?: @[];
     NSString *overrideSubtitle = flex4OverriddenKeys.count == 0
         ? @"No overridden values"
-        : [NSString stringWithFormat:@"%lu overridden value%@. Tap to reset.", (unsigned long)flex4OverriddenKeys.count, flex4OverriddenKeys.count == 1 ? @"" : @"s"];
+        : [NSString stringWithFormat:@"%lu overridden value%@. Tap to inspect/edit.", (unsigned long)flex4OverriddenKeys.count, flex4OverriddenKeys.count == 1 ? @"" : @"s"];
     [items addObject:[FLEXingBrowserItem itemWithTitle:@"Overrides" subtitle:overrideSubtitle section:@"FLEX 4 Beta" kind:@"overridesBucket"]];
 ''',
 'overrides bucket row',
 required=True)
 
-# Add reset actions for the overrides bucket.
+# Add inspect/edit actions for the overrides bucket.
 patch_once(
 '''    if ([item.kind isEqualToString:@"toggleEnabled"]) {
 ''',
@@ -63,7 +63,19 @@ patch_once(
             return;
         }
 
-        UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Overrides" message:@"Reset one value or reset all overrides." preferredStyle:UIAlertControllerStyleActionSheet];
+        NSString *(^displayValue)(id) = ^NSString *(id value) {
+            if (!value || value == (id)kCFNull) { return @"<not set>"; }
+            if ([value isKindOfClass:NSNumber.class]) { return [value boolValue] ? @"1" : @"0"; }
+            if ([value isKindOfClass:NSString.class]) { return (NSString *)value; }
+            return [NSString stringWithFormat:@"%@", value];
+        };
+
+        void (^persistOverrideState)(void) = ^{
+            [defaults setObject:overriddenKeys forKey:@"FLEX4BetaOverriddenUserDefaultsKeys"];
+            [defaults setObject:originalValues forKey:@"FLEX4BetaOriginalUserDefaultsValues"];
+            [defaults synchronize];
+            [self reloadItems];
+        };
 
         void (^resetKey)(NSString *) = ^(NSString *keyToReset) {
             if (keyToReset.length == 0) { return; }
@@ -75,11 +87,57 @@ patch_once(
             }
             [overriddenKeys removeObject:keyToReset];
             [originalValues removeObjectForKey:keyToReset];
-            [defaults setObject:overriddenKeys forKey:@"FLEX4BetaOverriddenUserDefaultsKeys"];
-            [defaults setObject:originalValues forKey:@"FLEX4BetaOriginalUserDefaultsValues"];
-            [defaults synchronize];
-            [self reloadItems];
+            persistOverrideState();
         };
+
+        void (^setBoolOverride)(NSString *, BOOL) = ^(NSString *keyToSet, BOOL boolValue) {
+            if (keyToSet.length == 0) { return; }
+            if (![overriddenKeys containsObject:keyToSet]) {
+                id originalValue = [defaults objectForKey:keyToSet];
+                if (originalValue) { originalValues[keyToSet] = originalValue; }
+                [overriddenKeys addObject:keyToSet];
+            }
+            [defaults setBool:boolValue forKey:keyToSet];
+            persistOverrideState();
+        };
+
+        void (^showDetailForKey)(NSString *) = ^(NSString *keyToInspect) {
+            id originalValue = originalValues[keyToInspect];
+            id overrideValue = [defaults objectForKey:keyToInspect];
+            NSString *message = [NSString stringWithFormat:@"Original: %@\nOverride: %@", displayValue(originalValue), displayValue(overrideValue)];
+            UIAlertController *detail = [UIAlertController alertControllerWithTitle:keyToInspect message:message preferredStyle:UIAlertControllerStyleActionSheet];
+
+            [detail addAction:[UIAlertAction actionWithTitle:@"Set True" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                setBoolOverride(keyToInspect, YES);
+            }]];
+            [detail addAction:[UIAlertAction actionWithTitle:@"Set False" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                setBoolOverride(keyToInspect, NO);
+            }]];
+            [detail addAction:[UIAlertAction actionWithTitle:@"Reset to Original" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+                resetKey(keyToInspect);
+            }]];
+            [detail addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+            detail.popoverPresentationController.sourceView = self.view;
+            detail.popoverPresentationController.sourceRect = self.view.bounds;
+            [self presentViewController:detail animated:YES completion:nil];
+        };
+
+        UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Overrides" message:@"Select an override to inspect, change, or reset." preferredStyle:UIAlertControllerStyleActionSheet];
+
+        NSUInteger visibleLimit = MIN((NSUInteger)overriddenKeys.count, (NSUInteger)24);
+        for (NSUInteger index = 0; index < visibleLimit; index++) {
+            NSString *keyToInspect = overriddenKeys[index];
+            id originalValue = originalValues[keyToInspect];
+            id overrideValue = [defaults objectForKey:keyToInspect];
+            NSString *summary = [NSString stringWithFormat:@"%@  %@ → %@", keyToInspect, displayValue(originalValue), displayValue(overrideValue)];
+            [sheet addAction:[UIAlertAction actionWithTitle:summary style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                showDetailForKey(keyToInspect);
+            }]];
+        }
+
+        if (overriddenKeys.count > visibleLimit) {
+            [sheet addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%lu more hidden. Use search to find the key.", (unsigned long)(overriddenKeys.count - visibleLimit)] style:UIAlertActionStyleDefault handler:nil]];
+        }
 
         [sheet addAction:[UIAlertAction actionWithTitle:@"Reset All Overrides" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
             for (NSString *keyToReset in [overriddenKeys copy]) {
@@ -96,18 +154,6 @@ patch_once(
             [self reloadItems];
         }]];
 
-        NSUInteger visibleLimit = MIN((NSUInteger)overriddenKeys.count, (NSUInteger)12);
-        for (NSUInteger index = 0; index < visibleLimit; index++) {
-            NSString *keyToReset = overriddenKeys[index];
-            [sheet addAction:[UIAlertAction actionWithTitle:keyToReset style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-                resetKey(keyToReset);
-            }]];
-        }
-
-        if (overriddenKeys.count > visibleLimit) {
-            [sheet addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%lu more hidden. Use Reset All or search the key.", (unsigned long)(overriddenKeys.count - visibleLimit)] style:UIAlertActionStyleDefault handler:nil]];
-        }
-
         [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
         sheet.popoverPresentationController.sourceView = self.view;
         sheet.popoverPresentationController.sourceRect = self.view.bounds;
@@ -117,7 +163,7 @@ patch_once(
 
     if ([item.kind isEqualToString:@"toggleEnabled"]) {
 ''',
-'overrides bucket reset actions',
+'overrides bucket inspect/edit actions',
 required=True)
 
 # Color rows that were changed directly from FLEX 4 Beta.
@@ -192,4 +238,4 @@ patch_once(
 required=True)
 
 path.write_text(text)
-print('Added FLEX 4 Beta visible branding, overrides bucket, stable immediate BOOL values, and overridden-row highlighting' if changed else 'No changes needed')
+print('Added FLEX 4 Beta visible branding, editable overrides bucket, stable immediate BOOL values, and overridden-row highlighting' if changed else 'No changes needed')
