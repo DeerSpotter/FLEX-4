@@ -33,6 +33,9 @@ jobs:
       - name: Patch FLEXing global search index
         run: python3 tools/add-setter-value-search.py
 
+      - name: Patch FLEX 4 Beta polish
+        run: python3 tools/flex4-beta-polish.py
+
       - name: Build rootless package
         run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
