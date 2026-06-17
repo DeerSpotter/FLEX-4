@@ -1,11 +1,11 @@
 Package: com.github.devnoname120.flexing
-Name: FLEXing
+Name: FLEX 4 Beta
 Pre-Depends: firmware (>= 15.0)
-Version: 1.6.0
+Version: 1.0.0
 Architecture: iphoneos-arm64
-Description: Open FLEX anywhere with a per-app manager GUI.
-Maintainer: Tanner Bennett <thepantsthief@me.com>
-Author: Tanner Bennett <thepantsthief@me.com>
+Description: FLEX 4 Beta runtime explorer and patch helper.
+Maintainer: DeerSpotter
+Author: DeerSpotter
 Section: Tweaks
 Depiction: https://nscake.github.io/package.html?package=com.pantsthief.flexing
 SileoDepiction: https://nscake.github.io/depictions/com.pantsthief.flexing.sileo.json
