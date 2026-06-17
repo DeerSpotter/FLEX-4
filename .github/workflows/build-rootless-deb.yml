@@ -30,6 +30,9 @@ jobs:
           altlist-src: 'opa334/AltList'
           altlist-branch: 'main'
 
+      - name: Patch FLEX 4 Beta app injection paths
+        run: python3 tools/flex4-app-injection-fix.py
+
       - name: Patch FLEXing global search index
         run: python3 tools/add-setter-value-search.py
 
