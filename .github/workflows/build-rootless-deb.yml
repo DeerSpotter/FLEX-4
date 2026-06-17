@@ -36,6 +36,9 @@ jobs:
       - name: Patch FLEXing global search index
         run: python3 tools/add-setter-value-search.py
 
+      - name: Patch FLEX 4 Beta global Auto Show default
+        run: python3 tools/flex4-global-autoshow-default.py
+
       - name: Patch FLEX 4 Beta polish
         run: python3 tools/flex4-beta-polish.py
 
