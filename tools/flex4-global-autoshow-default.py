@@ -3,6 +3,25 @@ from pathlib import Path
 
 changed = False
 
+# This script can be run by both GitHub Actions and the Makefile in the same checkout.
+# If the global auto show patch is already present, exit early so later patches that
+# insert code between our helper block and FLEXingNetworkMonitoringEnabled do not make
+# the old insertion needle look unpatched and duplicate the helper functions.
+config_path = Path('Shared/FLEXingConfig.m')
+header_path = Path('Shared/FLEXingConfig.h')
+tweak_path = Path('Tweak.xm')
+if config_path.exists() and header_path.exists() and tweak_path.exists():
+    config_text = config_path.read_text()
+    header_text = header_path.read_text()
+    tweak_text = tweak_path.read_text()
+    if (
+        'BOOL FLEX4BetaGlobalAutoShowEnabled(void)' in config_text
+        and 'BOOL FLEX4BetaSaveGlobalAutoShowEnabled(BOOL enabled)' in header_text
+        and 'toggleGlobalAutoShow' in tweak_text
+    ):
+        print('FLEX 4 Beta global Auto Show patch already present')
+        raise SystemExit(0)
+
 def patch_file(path_name, patches):
     global changed
     path = Path(path_name)
