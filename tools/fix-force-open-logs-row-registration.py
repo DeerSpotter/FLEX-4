@@ -4,7 +4,8 @@ from pathlib import Path
 path = Path('Tweak.xm')
 text = path.read_text()
 
-if '@"Force Open Logs"' in text:
+registration_call = 'registerSelector, @"Force Open Logs", forceOpenLogsAction'
+if registration_call in text:
     print('Skipped already patched: Force Open Logs row registration')
     raise SystemExit(0)
 
