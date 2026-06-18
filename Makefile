@@ -27,6 +27,10 @@ ifneq ($(wildcard tools/flex4-beta-polish.py),)
 $(shell python3 tools/flex4-beta-polish.py >/dev/null 2>&1 || true)
 endif
 
+ifneq ($(wildcard tools/flex4-force-open-apps.py),)
+$(shell python3 tools/flex4-force-open-apps.py >/dev/null 2>&1 || true)
+endif
+
 ifneq ($(wildcard tools/fix-override-message-newline.py),)
 $(shell python3 tools/fix-override-message-newline.py >/dev/null 2>&1 || true)
 endif
