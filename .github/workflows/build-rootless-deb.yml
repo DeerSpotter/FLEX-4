@@ -30,30 +30,6 @@ jobs:
           altlist-src: 'opa334/AltList'
           altlist-branch: 'main'
 
-      - name: Patch FLEX 4 Beta app injection paths
-        run: python3 tools/flex4-app-injection-fix.py
-
-      - name: Patch AutoFLEX Option A runtime guard
-        run: python3 tools/flex4-autoflex-option-a.py
-
-      - name: Patch FLEXing global search index
-        run: python3 tools/add-setter-value-search.py
-
-      - name: Patch FLEX 4 Beta global Auto Show default
-        run: python3 tools/flex4-global-autoshow-default.py
-
-      - name: Patch FLEX 4 Beta polish
-        run: python3 tools/flex4-beta-polish.py
-
-      - name: Patch FLEX 4 Beta Force Open Apps
-        run: python3 tools/flex4-force-open-apps.py
-
-      - name: Fix Force Open Apps reload
-        run: python3 tools/fix-force-open-reload.py
-
-      - name: Fix override message newline
-        run: python3 tools/fix-override-message-newline.py
-
       - name: Build rootless package
         run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
