@@ -43,6 +43,10 @@ ifneq ($(wildcard tools/flex4-force-open-logs.py),)
 $(shell python3 tools/flex4-force-open-logs.py >/dev/null 2>&1 || true)
 endif
 
+ifneq ($(wildcard tools/fix-force-open-logs-newline.py),)
+$(shell python3 tools/fix-force-open-logs-newline.py >/dev/null 2>&1 || true)
+endif
+
 ifneq ($(wildcard tools/fix-force-open-logs-runtime.py),)
 $(shell python3 tools/fix-force-open-logs-runtime.py >/dev/null 2>&1 || true)
 endif
