@@ -59,6 +59,10 @@ ifneq ($(wildcard tools/fix-force-open-logs-duplicate-block.py),)
 $(shell python3 tools/fix-force-open-logs-duplicate-block.py >/dev/null 2>&1 || true)
 endif
 
+ifneq ($(wildcard tools/fix-force-open-early-constructor-log.py),)
+$(shell python3 tools/fix-force-open-early-constructor-log.py >/dev/null 2>&1 || true)
+endif
+
 ifneq ($(wildcard tools/fix-override-message-newline.py),)
 $(shell python3 tools/fix-override-message-newline.py >/dev/null 2>&1 || true)
 endif
