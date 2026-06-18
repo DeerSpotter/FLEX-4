@@ -11,6 +11,10 @@ ifneq ($(wildcard tools/flex4-app-injection-fix.py),)
 $(shell python3 tools/flex4-app-injection-fix.py >/dev/null 2>&1 || true)
 endif
 
+ifneq ($(wildcard tools/flex4-autoflex-option-a.py),)
+$(shell python3 tools/flex4-autoflex-option-a.py >/dev/null 2>&1 || true)
+endif
+
 ifneq ($(wildcard tools/add-setter-value-search.py),)
 $(shell python3 tools/add-setter-value-search.py >/dev/null 2>&1 || true)
 endif
