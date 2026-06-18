@@ -242,7 +242,7 @@ static void FLEX4BetaLogForceOpenLaunch(NSString *event, NSString *detail) {
     NSString *time = [self timeStringForLog:entry];
 
     cell.textLabel.text = [NSString stringWithFormat:@"%@ - %@", event, app];
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@\n%@\n%@", bundle, time, detail];
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@\\n%@\\n%@", bundle, time, detail];
     if ([event.lowercaseString containsString:@"blocked"] || [event.lowercaseString containsString:@"failed"]) {
         cell.textLabel.textColor = UIColor.systemRedColor;
         cell.detailTextLabel.textColor = UIColor.systemOrangeColor;
@@ -262,7 +262,7 @@ static void FLEX4BetaLogForceOpenLaunch(NSString *event, NSString *detail) {
     NSString *bundle = [self stringForLog:entry key:@"Bundle" fallback:@"No bundle"];
     NSString *detail = [self stringForLog:entry key:@"Detail" fallback:@""];
     NSString *time = [self timeStringForLog:entry];
-    NSString *message = [NSString stringWithFormat:@"App: %@\nBundle: %@\nTime: %@\n\n%@", app, bundle, time, detail];
+    NSString *message = [NSString stringWithFormat:@"App: %@\\nBundle: %@\\nTime: %@\\n\\n%@", app, bundle, time, detail];
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:event message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
@@ -301,7 +301,8 @@ def patch_tweak(text):
 
     text = insert_before(text, 'static void FLEX4BetaOpenForceOpenAppsMenu(__kindof UITableViewController *host) {\n', LOG_HELPER_AND_VIEW, 'force open logs view controller', required=False)
 
-    if '@"Force Open Logs"' not in text:
+    registration_call = 'registerSelector, @"Force Open Logs", forceOpenLogsAction'
+    if registration_call not in text:
         force_open_registration = '    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"Force Open Apps", forceOpenAction);\n'
         force_open_logs_registration = force_open_registration + '''
     FLEXingGlobalsRowAction forceOpenLogsAction = ^(__kindof UITableViewController *host) {
