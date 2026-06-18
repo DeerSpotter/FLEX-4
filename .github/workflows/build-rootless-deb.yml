@@ -48,6 +48,9 @@ jobs:
       - name: Patch FLEX 4 Beta Force Open Apps
         run: python3 tools/flex4-force-open-apps.py
 
+      - name: Fix Force Open Apps reload
+        run: python3 tools/fix-force-open-reload.py
+
       - name: Fix override message newline
         run: python3 tools/fix-override-message-newline.py
 
