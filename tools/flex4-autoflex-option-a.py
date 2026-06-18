@@ -4,13 +4,14 @@ from pathlib import Path
 changed = False
 
 # Option A keeps the existing FLEX 4 Beta rootless package and libFLEX.dylib loader,
-# but changes the injection model to be closer to AutoFLEX: broad substrate filter,
+# but improves reach by using the rootless-safe UIKit/UIKitCore framework filter,
 # then a runtime guard that only continues inside real app processes.
 plist = Path('FLEXing.plist')
 plist_text = '''{
     Filter =     {
         Bundles =         (
-            "-"
+            "com.apple.UIKit",
+            "com.apple.UIKitCore"
         );
     };
 }
@@ -18,9 +19,9 @@ plist_text = '''{
 if plist.read_text() != plist_text:
     plist.write_text(plist_text)
     changed = True
-    print('Patched FLEXing.plist to AutoFLEX-style broad bundle filter')
+    print('Patched FLEXing.plist to rootless-safe UIKit/UIKitCore filter')
 else:
-    print('FLEXing.plist already uses AutoFLEX-style broad bundle filter')
+    print('FLEXing.plist already uses rootless-safe UIKit/UIKitCore filter')
 
 tweak = Path('Tweak.xm')
 text = tweak.read_text()
@@ -87,7 +88,7 @@ inline bool isLikelyUIProcess() {
 
     new_guard = '''// FLEX4BetaAppInjectionPathFixMarker
 // FLEX4BetaAutoFlexOptionAMarker
-// AutoFLEX-style broad injection guard: allow the substrate filter to reach more apps,
+// AutoFLEX-style runtime guard: allow the framework filter to reach UIKit apps,
 // then stop immediately unless the process looks like a foreground app bundle.
 static BOOL FLEX4BetaPathIsAppExtension(NSString *path) {
     return path.length > 0 && ([path containsString:@".appex/"] || [path hasSuffix:@".appex"] || [path containsString:@"/PlugIns/"]);
@@ -190,7 +191,7 @@ inline bool isLikelyUIProcess() {
         raise SystemExit('Could not find FLEX 4 Beta app injection guard block to upgrade')
     text = text.replace(old_guard, new_guard, 1)
     changed = True
-    print('Patched runtime guard for AutoFLEX Option A broad app injection')
+    print('Patched runtime guard for AutoFLEX Option A app process handling')
 
 old_ctor = '''    BOOL springBoardProcess = isSpringBoardProcess();
     currentBundleAllowsFLEX = springBoardProcess || FLEXingIsBundleEnabled(currentBundleIdentifier);
@@ -238,6 +239,6 @@ else:
 
 if changed:
     tweak.write_text(text)
-    print('Applied AutoFLEX Option A broad injection patch')
+    print('Applied AutoFLEX Option A rootless-safe patch')
 else:
     print('No AutoFLEX Option A changes needed')
