@@ -17,22 +17,27 @@ def patch_text(path_name, transform):
         print(f'No changes needed for {path_name}')
 
 
-def insert_before(text, needle, insertion, label):
+def insert_before(text, needle, insertion, label, required=True):
     if insertion.strip() in text:
         print(f'Skipped already patched: {label}')
         return text
     if needle not in text:
-        raise SystemExit(f'Could not find block to patch: {label}')
+        message = f'Could not find block to patch: {label}'
+        if required:
+            raise SystemExit(message)
+        print(message)
+        return text
     print(f'Patched: {label}')
     return text.replace(needle, insertion + needle, 1)
 
 
-def replace_once(text, old, new, label):
+def replace_optional(text, old, new, label):
     if new in text:
         print(f'Skipped already patched: {label}')
         return text
     if old not in text:
-        raise SystemExit(f'Could not find block to patch: {label}')
+        print(f'Skipped missing block: {label}')
+        return text
     print(f'Patched: {label}')
     return text.replace(old, new, 1)
 
@@ -291,26 +296,24 @@ static void FLEX4BetaOpenForceOpenLogsMenu(__kindof UITableViewController *host)
 
 def patch_tweak(text):
     if 'FLEX4BetaForceOpenAppsPatchMarker' not in text:
-        raise SystemExit('Force Open Apps patch must run before Force Open Logs patch')
+        print('Skipped Force Open Logs row because Force Open Apps patch is not present yet')
+        return text
 
-    text = insert_before(text, 'static void FLEX4BetaOpenForceOpenAppsMenu(__kindof UITableViewController *host) {\n', LOG_HELPER_AND_VIEW, 'force open logs view controller')
+    text = insert_before(text, 'static void FLEX4BetaOpenForceOpenAppsMenu(__kindof UITableViewController *host) {\n', LOG_HELPER_AND_VIEW, 'force open logs view controller', required=False)
 
-    old_register = '''    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"Force Open Apps", forceOpenAction);
-
-    flexingPanelEntryRegistered = YES;
-    HBLogInfo(@"FLEXing: Registered FLEX 4 Beta and Force Open Apps panel rows.");
-'''
-    new_register = '''    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"Force Open Apps", forceOpenAction);
-
+    if '@"Force Open Logs"' not in text:
+        force_open_registration = '    ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"Force Open Apps", forceOpenAction);\n'
+        force_open_logs_registration = force_open_registration + '''
     FLEXingGlobalsRowAction forceOpenLogsAction = ^(__kindof UITableViewController *host) {
         FLEX4BetaOpenForceOpenLogsMenu(host);
     };
     ((void (*)(id, SEL, NSString *, FLEXingGlobalsRowAction))[manager methodForSelector:registerSelector])(manager, registerSelector, @"Force Open Logs", forceOpenLogsAction);
-
-    flexingPanelEntryRegistered = YES;
-    HBLogInfo(@"FLEXing: Registered FLEX 4 Beta, Force Open Apps, and Force Open Logs panel rows.");
 '''
-    text = replace_once(text, old_register, new_register, 'force open logs custom row registration')
+        text = replace_optional(text, force_open_registration, force_open_logs_registration, 'force open logs custom row registration')
+    else:
+        print('Skipped already patched: force open logs custom row registration')
+
+    text = text.replace('HBLogInfo(@"FLEXing: Registered FLEX 4 Beta and Force Open Apps panel rows.");', 'HBLogInfo(@"FLEXing: Registered FLEX 4 Beta, Force Open Apps, and Force Open Logs panel rows.");')
 
     old_launch_state = '''    BOOL springBoardProcess = isSpringBoardProcess();
     BOOL currentBundleForceOpen = FLEX4BetaIsForceOpenBundle(currentBundleIdentifier);
@@ -329,7 +332,7 @@ def patch_tweak(text):
         FLEX4BetaLogForceOpenLaunch(@"Settings Loaded", [NSString stringWithFormat:@"allows=%@ autoShow=%@", currentBundleAllowsFLEX ? @"YES" : @"NO", currentBundleShouldAutoShow ? @"YES" : @"NO"]);
     }
 '''
-    text = replace_once(text, old_launch_state, new_launch_state, 'force open launch state logging')
+    text = replace_optional(text, old_launch_state, new_launch_state, 'force open launch state logging')
 
     old_no_lib = '''        } else {
             // libFLEX not found
@@ -343,7 +346,7 @@ def patch_tweak(text):
             }
         }
 '''
-    text = replace_once(text, old_no_lib, new_no_lib, 'force open missing libFLEX logging')
+    text = replace_optional(text, old_no_lib, new_no_lib, 'force open missing libFLEX logging')
 
     old_guard = '''        if (isLikelyUIProcess() && !isSnapchatApp() && currentBundleAllowsFLEX) {
             handle = dlopen(libflex.UTF8String, RTLD_LAZY);
@@ -381,7 +384,7 @@ def patch_tweak(text):
                 FLEX4BetaLogForceOpenLaunch(@"Loaded libFLEX", [NSString stringWithFormat:@"Loaded %@", libflex ?: @""]);
             }
 '''
-    text = replace_once(text, old_guard, new_guard, 'force open guard and dlopen logging')
+    text = replace_optional(text, old_guard, new_guard, 'force open guard and dlopen logging')
 
     old_symbols = '''        if (FLXGetManager && FLXRevealSEL) {
             manager = FLXGetManager();
@@ -404,7 +407,7 @@ def patch_tweak(text):
                 FLEX4BetaLogForceOpenLaunch(@"Initialized", @"FLEX manager and reveal selector resolved.");
             }
 '''
-    text = replace_once(text, old_symbols, new_symbols, 'force open initialized logging')
+    text = replace_optional(text, old_symbols, new_symbols, 'force open initialized logging')
 
     old_delayed = '''            if (currentBundleForceOpen && !didAutoShowExplorer && !isSpringBoardProcess()) {
                 didAutoShowExplorer = YES;
@@ -428,7 +431,8 @@ def patch_tweak(text):
                 });
             }
 '''
-    text = replace_once(text, old_delayed, new_delayed, 'force open delayed show logging')
+    text = replace_optional(text, old_delayed, new_delayed, 'force open delayed show logging')
+
     return text
 
 
